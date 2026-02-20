@@ -1,0 +1,86 @@
+[project]
+name = "python-project-template"
+version = "0.1.0"
+description = "Local Flask app to browse WhatsApp iOS backup history."
+readme = "README.md"
+requires-python = "==3.14.*"
+dependencies = [
+    "ruff",
+    "ty",
+    "beautysh",
+    "setuptools",
+    "flask",
+]
+
+# https://docs.astral.sh/ruff/configuration
+[tool.ruff]
+exclude = [
+    ".git",
+    "__pycache__",
+    "mypy_cache",
+    "pytest_cache",
+    ".ruff_cache",
+    ".vscode",
+    ".idea",
+    ".venv",
+    "venv",
+    "env",
+    "*.egg-info",
+    "dist",
+    "build",
+]
+line-length = 120
+indent-width = 4
+target-version = "py314"
+
+[tool.ruff.lint]
+ignore = [
+    "B006",
+    "B011",
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D106",
+    "D107",
+    "D200",
+    "D201",
+    "D202",
+    "D205",
+    "D209",
+    "D212",
+    "D301",
+    "D400",
+    "D401",
+    "D404",
+    "D407",
+    "D415",
+    "D417",
+    "S110",
+    "T201",
+    "D213",
+    "D203",
+    "D413",
+    "E266",
+]
+select = ["B", "C", "D", "E", "EXE", "F", "I", "PIE", "PT", "S", "T", "W"]
+# Enable the isort rules.
+extend-select = ["I"]
+# Preview mode enables a collection of newer lint rules, fixes, and formatter style changes that are considered experimental or unstable,
+# https://docs.astral.sh/ruff/preview/
+preview = true
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+[tool.ruff.lint.isort]
+known-first-party = ["whatsapp_backup_viewer"]

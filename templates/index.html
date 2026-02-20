@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="app-shell" id="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <header class="sidebar-header">
+      <h1>Chats</h1>
+      <input id="chat-search" type="search" placeholder="Search chats">
+      <div class="tabs" id="chat-tabs">
+        <button class="tab is-active" data-tab="all">All <span id="count-all">0</span></button>
+        <button class="tab" data-tab="groups">Groups <span id="count-groups">0</span></button>
+        <button class="tab" data-tab="archived">Archived <span id="count-archived">0</span></button>
+      </div>
+    </header>
+    <ul id="chat-list" class="chat-list"></ul>
+  </aside>
+
+  <div class="sidebar-resizer" id="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize chat list"></div>
+
+  <main class="chat-panel">
+    <header class="chat-header">
+      <button type="button" class="chat-contact" id="chat-contact-button">
+        <span class="avatar avatar-lg" id="chat-header-avatar"></span>
+        <span class="chat-contact-meta">
+          <span class="chat-contact-title" id="chat-title">Select a chat</span>
+          <span class="chat-contact-subtitle" id="chat-subtitle"></span>
+        </span>
+      </button>
+    </header>
+    <section id="messages" class="messages"></section>
+  </main>
+</div>
+
+<div class="info-modal hidden" id="info-modal" aria-hidden="true">
+  <div class="info-modal-backdrop" data-close-modal="true"></div>
+  <article class="info-modal-content" role="dialog" aria-modal="true" aria-label="Chat info">
+    <button type="button" class="info-close" id="info-close-button" aria-label="Close">x</button>
+    <div class="info-layout">
+      <aside class="info-nav hidden" id="group-info-nav">
+        <h4>Group</h4>
+        <button type="button" class="info-nav-btn is-active" data-info-view="info">Info</button>
+        <button type="button" class="info-nav-btn" data-info-view="members">Members</button>
+      </aside>
+      <section class="info-main">
+        <div class="info-header">
+          <span class="avatar avatar-xl" id="info-avatar"></span>
+          <div>
+            <h3 id="info-title">Chat info</h3>
+            <p id="info-jid"></p>
+          </div>
+        </div>
+        <div id="info-view-info" class="info-view">
+          <dl class="info-stats">
+            <div><dt>Type</dt><dd id="info-type"></dd></div>
+            <div><dt>Unread</dt><dd id="info-unread"></dd></div>
+            <div><dt>Archived</dt><dd id="info-archived"></dd></div>
+            <div><dt>Muted Until</dt><dd id="info-muted"></dd></div>
+          </dl>
+          <section id="group-info-section" class="hidden">
+            <h4>Group</h4>
+            <p><strong>Creator:</strong> <span id="group-creator"></span></p>
+            <p><strong>Owner:</strong> <span id="group-owner"></span></p>
+            <p><strong>Members:</strong> <span id="group-member-count"></span></p>
+          </section>
+        </div>
+        <div id="info-view-members" class="info-view hidden">
+          <div class="members-head">
+            <h4>Members</h4>
+            <span id="group-member-count-summary"></span>
+          </div>
+          <ul id="group-members" class="group-members"></ul>
+        </div>
+      </section>
+    </div>
+  </article>
+</div>
+
+<div class="image-viewer-modal hidden" id="image-viewer-modal" aria-hidden="true">
+  <div class="image-viewer-backdrop" data-close-image-viewer="true"></div>
+  <article class="image-viewer-content" role="dialog" aria-modal="true" aria-label="Image viewer">
+    <button type="button" class="image-viewer-close" id="image-viewer-close" aria-label="Close">x</button>
+    <img id="image-viewer-image" src="" alt="Message image">
+    <p id="image-viewer-caption"></p>
+  </article>
+</div>
+
+{% if error_message %}
+<div class="error-banner">{{ error_message }}</div>
+{% endif %}
+
+<script id="initial-state" type="application/json">{{ initial_state | tojson }}</script>
+{% endblock %}

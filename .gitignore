@@ -1,0 +1,21 @@
+# IDEs
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+.venv/
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+
+# Logs
+*.log

@@ -1,0 +1,634 @@
+(function () {
+  const initialStateNode = document.getElementById("initial-state");
+  if (!initialStateNode) {
+    return;
+  }
+
+  const initialState = JSON.parse(initialStateNode.textContent || "{}");
+  const state = {
+    tab: initialState.tab || "all",
+    query: "",
+    chats: initialState.chats || [],
+    counts: initialState.counts || { all: 0, groups: 0, archived: 0 },
+    selectedChatId: initialState.selected_chat_id || null,
+    messages: initialState.messages || [],
+    nextBefore: initialState.next_before || null,
+    loadingOlder: false,
+    loadingChats: false,
+    hasMoreChats: (initialState.chats || []).length >= 100,
+    chatOffset: (initialState.chats || []).length,
+    chatPageSize: 200,
+    infoCache: {},
+  };
+
+  const SIDEBAR_WIDTH_KEY = "whatsapp_viewer_sidebar_width";
+
+  const tabsContainer = document.getElementById("chat-tabs");
+  const searchInput = document.getElementById("chat-search");
+  const chatListNode = document.getElementById("chat-list");
+  const chatTitleNode = document.getElementById("chat-title");
+  const chatSubtitleNode = document.getElementById("chat-subtitle");
+  const chatHeaderAvatarNode = document.getElementById("chat-header-avatar");
+  const chatContactButton = document.getElementById("chat-contact-button");
+  const messagesNode = document.getElementById("messages");
+  const chatPanel = document.querySelector(".chat-panel");
+  const sidebarResizer = document.getElementById("sidebar-resizer");
+
+  const infoModal = document.getElementById("info-modal");
+  const infoCloseButton = document.getElementById("info-close-button");
+  const infoTitle = document.getElementById("info-title");
+  const infoJid = document.getElementById("info-jid");
+  const infoType = document.getElementById("info-type");
+  const infoUnread = document.getElementById("info-unread");
+  const infoArchived = document.getElementById("info-archived");
+  const infoMuted = document.getElementById("info-muted");
+  const infoAvatar = document.getElementById("info-avatar");
+  const groupInfoNav = document.getElementById("group-info-nav");
+  const infoViewInfo = document.getElementById("info-view-info");
+  const infoViewMembers = document.getElementById("info-view-members");
+  const groupSection = document.getElementById("group-info-section");
+  const groupCreator = document.getElementById("group-creator");
+  const groupOwner = document.getElementById("group-owner");
+  const groupMemberCount = document.getElementById("group-member-count");
+  const groupMemberCountSummary = document.getElementById("group-member-count-summary");
+  const groupMembers = document.getElementById("group-members");
+  const imageViewerModal = document.getElementById("image-viewer-modal");
+  const imageViewerCloseButton = document.getElementById("image-viewer-close");
+  const imageViewerImage = document.getElementById("image-viewer-image");
+  const imageViewerCaption = document.getElementById("image-viewer-caption");
+
+  const escapeHtml = (value) =>
+    String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+  const formatDate = (value) => {
+    if (!value) {
+      return "";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+    return date.toLocaleString([], {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  };
+
+  const formatShortDate = (value) => {
+    if (!value) {
+      return "";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
+
+  const initialsFromName = (name) => {
+    const cleaned = (name || "")
+      .trim()
+      .replaceAll(/\s+/g, " ");
+    if (!cleaned) {
+      return "?";
+    }
+    const parts = cleaned.split(" ");
+    if (parts.length === 1) {
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+    return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+  };
+
+  const hashColor = (text) => {
+    let hash = 0;
+    for (let i = 0; i < text.length; i += 1) {
+      hash = text.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const hue = Math.abs(hash % 360);
+    return `hsl(${hue} 55% 42%)`;
+  };
+
+  const avatarMarkup = (chat, sizeClass) => {
+    const label = chat.chat_name || chat.contact_jid || "Unknown";
+    if (chat.avatar && chat.avatar.available && chat.avatar.kind === "image") {
+      return `<span class="avatar ${sizeClass}"><img src="${escapeHtml(chat.avatar.url)}" alt="${escapeHtml(label)}"></span>`;
+    }
+    const initials = initialsFromName(label);
+    const color = hashColor(label);
+    return `<span class="avatar ${sizeClass}" style="background:${escapeHtml(color)}">${escapeHtml(initials)}</span>`;
+  };
+
+  const memberAvatarMarkup = (member, sizeClass) => {
+    const label = member.name || member.jid || "Unknown";
+    if (member.avatar && member.avatar.available && member.avatar.kind === "image") {
+      return `<span class="avatar ${sizeClass}"><img src="${escapeHtml(member.avatar.url)}" alt="${escapeHtml(label)}"></span>`;
+    }
+    const initials = initialsFromName(label);
+    const color = hashColor(label);
+    return `<span class="avatar ${sizeClass}" style="background:${escapeHtml(color)}">${escapeHtml(initials)}</span>`;
+  };
+
+  const renderAvatarNode = (targetNode, chat, fallbackLabel) => {
+    const label = fallbackLabel || chat.chat_name || chat.contact_jid || "Unknown";
+    if (chat.avatar && chat.avatar.available && chat.avatar.kind === "image") {
+      targetNode.innerHTML = `<img src="${escapeHtml(chat.avatar.url)}" alt="${escapeHtml(label)}">`;
+      targetNode.style.background = "transparent";
+      return;
+    }
+    targetNode.innerHTML = escapeHtml(initialsFromName(label));
+    targetNode.style.background = hashColor(label);
+  };
+
+  const applySystemTheme = () => {
+    const prefersLight = window.matchMedia("(prefers-color-scheme: light)").matches;
+    document.documentElement.dataset.theme = prefersLight ? "light" : "dark";
+  };
+
+  const syncThemeListener = () => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
+    applySystemTheme();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", applySystemTheme);
+      return;
+    }
+    mediaQuery.addListener(applySystemTheme);
+  };
+
+  const setTabCounts = () => {
+    document.getElementById("count-all").textContent = String(state.counts.all || 0);
+    document.getElementById("count-groups").textContent = String(state.counts.groups || 0);
+    document.getElementById("count-archived").textContent = String(state.counts.archived || 0);
+  };
+
+  const syncTabUI = () => {
+    tabsContainer.querySelectorAll(".tab").forEach((tabButton) => {
+      tabButton.classList.toggle("is-active", tabButton.dataset.tab === state.tab);
+    });
+  };
+
+  const updateUrl = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", state.tab);
+    if (state.selectedChatId) {
+      url.searchParams.set("chat", String(state.selectedChatId));
+    } else {
+      url.searchParams.delete("chat");
+    }
+    window.history.replaceState({}, "", `${url.pathname}?${url.searchParams.toString()}`);
+  };
+
+  const selectedChat = () => state.chats.find((chat) => chat.chat_id === state.selectedChatId);
+
+  const renderChats = () => {
+    if (!state.chats.length) {
+      chatListNode.innerHTML = '<li class="empty-state">No chats found.</li>';
+      return;
+    }
+
+    const chatRows = state.chats
+      .map((chat) => {
+        const isSelected = chat.chat_id === state.selectedChatId;
+        const badge = chat.unread_count > 0 ? `<span class="unread-badge">${chat.unread_count}</span>` : "";
+        return `
+          <li class="chat-row ${isSelected ? "is-selected" : ""}" data-chat-id="${chat.chat_id}">
+            <div class="chat-row-main">
+              ${avatarMarkup(chat, "avatar-sm")}
+              <div class="chat-row-content">
+                <div class="chat-topline">
+                  <span class="chat-name">${escapeHtml(chat.chat_name)}</span>
+                  <span class="chat-time">${escapeHtml(formatShortDate(chat.last_message_date))}</span>
+                </div>
+                <div class="chat-bottomline">
+                  <span class="chat-preview">${escapeHtml(chat.last_message_text || "")}</span>
+                  ${badge}
+                </div>
+              </div>
+            </div>
+          </li>
+        `;
+      })
+      .join("");
+
+    const loadingRow = state.loadingChats
+      ? '<li class="empty-state">Loading more chats...</li>'
+      : state.hasMoreChats
+        ? '<li class="empty-state">Scroll to load more</li>'
+        : "";
+    chatListNode.innerHTML = `${chatRows}${loadingRow}`;
+  };
+
+  const renderMedia = (media) => {
+    if (!media) {
+      return "";
+    }
+    if (!media.available) {
+      return `<div class="media"><a href="${escapeHtml(media.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+        media.file_name
+      )} (missing)</a></div>`;
+    }
+    if (media.kind === "image") {
+      return `
+        <div class="media">
+          <button type="button" class="media-image-trigger" data-image-url="${escapeHtml(media.url)}" data-image-name="${escapeHtml(
+            media.file_name
+          )}">
+            <img class="message-image-thumb" src="${escapeHtml(media.url)}" alt="${escapeHtml(media.file_name)}">
+          </button>
+        </div>
+      `;
+    }
+    if (media.kind === "video") {
+      return `<div class="media"><video controls src="${escapeHtml(media.url)}"></video></div>`;
+    }
+    if (media.kind === "audio") {
+      return `<div class="media"><audio controls src="${escapeHtml(media.url)}"></audio></div>`;
+    }
+    return `<div class="media"><a href="${escapeHtml(media.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+      media.file_name
+    )}</a></div>`;
+  };
+
+  const renderMessages = () => {
+    const chat = selectedChat();
+    chatTitleNode.textContent = chat ? chat.chat_name : "Select a chat";
+    chatSubtitleNode.textContent = chat ? chat.contact_jid : "";
+    if (chat && chatHeaderAvatarNode) {
+      renderAvatarNode(chatHeaderAvatarNode, chat, chat.chat_name);
+    } else if (chatHeaderAvatarNode) {
+      chatHeaderAvatarNode.innerHTML = "?";
+      chatHeaderAvatarNode.style.background = "";
+    }
+
+    if (!state.messages.length) {
+      messagesNode.innerHTML = '<div class="empty-state">No messages to display.</div>';
+      return;
+    }
+
+    const rows = [...state.messages].reverse();
+    messagesNode.innerHTML = rows
+      .map((message) => {
+        const directionClass = message.is_from_me ? "outgoing" : "incoming";
+        const sender = message.sender_name || (chat ? chat.chat_name : "Unknown");
+        const text = message.text ? `<div class="message-text">${escapeHtml(message.text)}</div>` : "";
+        const media = renderMedia(message.media);
+
+        return `
+          <article class="message ${directionClass}">
+            <div class="sender">${escapeHtml(sender)}</div>
+            ${text}
+            ${media}
+            <div class="message-meta">${escapeHtml(formatDate(message.message_date))}</div>
+          </article>
+        `;
+      })
+      .join("");
+  };
+
+  const setInfoView = (viewName) => {
+    const infoSelected = viewName === "info";
+    infoViewInfo.classList.toggle("hidden", !infoSelected);
+    infoViewMembers.classList.toggle("hidden", infoSelected);
+    groupInfoNav.querySelectorAll(".info-nav-btn").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.infoView === viewName);
+    });
+  };
+
+  const fetchChats = async ({ reset = true } = {}) => {
+    if (state.loadingChats) {
+      return;
+    }
+    state.loadingChats = true;
+    if (reset) {
+      state.chatOffset = 0;
+      state.hasMoreChats = true;
+    }
+
+    const params = new URLSearchParams({
+      tab: state.tab,
+      limit: String(state.chatPageSize),
+      offset: String(state.chatOffset),
+    });
+    if (state.query) {
+      params.set("q", state.query);
+    }
+    const response = await fetch(`/api/chats?${params.toString()}`);
+    if (!response.ok) {
+      state.loadingChats = false;
+      return;
+    }
+    const payload = await response.json();
+    const incomingChats = payload.chats || [];
+    state.chats = reset ? incomingChats : [...state.chats, ...incomingChats];
+    state.chatOffset = state.chats.length;
+    state.hasMoreChats = incomingChats.length === state.chatPageSize;
+    state.counts = payload.counts || state.counts;
+
+    if (!state.chats.find((chat) => chat.chat_id === state.selectedChatId)) {
+      state.selectedChatId = state.chats.length ? state.chats[0].chat_id : null;
+      await fetchMessages({ replaceCurrent: true, preservePosition: false });
+    }
+
+    setTabCounts();
+    syncTabUI();
+    renderChats();
+    renderMessages();
+    updateUrl();
+    state.loadingChats = false;
+  };
+
+  const fetchMessages = async ({ replaceCurrent, preservePosition }) => {
+    if (!state.selectedChatId) {
+      state.messages = [];
+      state.nextBefore = null;
+      renderMessages();
+      return;
+    }
+    if (!replaceCurrent && (!state.nextBefore || state.loadingOlder)) {
+      return;
+    }
+
+    const previousHeight = messagesNode.scrollHeight;
+    const previousTop = messagesNode.scrollTop;
+    if (!replaceCurrent) {
+      state.loadingOlder = true;
+    }
+
+    const params = new URLSearchParams({ limit: "100" });
+    if (!replaceCurrent && state.nextBefore) {
+      params.set("before", state.nextBefore);
+    }
+
+    const response = await fetch(`/api/chats/${state.selectedChatId}/messages?${params.toString()}`);
+    if (!response.ok) {
+      state.loadingOlder = false;
+      return;
+    }
+
+    const payload = await response.json();
+    if (replaceCurrent) {
+      state.messages = payload.messages || [];
+    } else {
+      state.messages = [...state.messages, ...(payload.messages || [])];
+    }
+    state.nextBefore = payload.next_before || null;
+    renderMessages();
+    renderChats();
+    updateUrl();
+
+    if (replaceCurrent) {
+      messagesNode.scrollTop = messagesNode.scrollHeight;
+    } else if (preservePosition) {
+      const newHeight = messagesNode.scrollHeight;
+      messagesNode.scrollTop = newHeight - previousHeight + previousTop;
+    }
+
+    state.loadingOlder = false;
+    if (window.innerWidth <= 980 && chatPanel) {
+      chatPanel.classList.add("is-open");
+    }
+  };
+
+  const closeInfoModal = () => {
+    infoModal.classList.add("hidden");
+    infoModal.setAttribute("aria-hidden", "true");
+  };
+
+  const openImageViewer = (imageUrl, imageName) => {
+    imageViewerImage.src = imageUrl;
+    imageViewerImage.alt = imageName || "Message image";
+    imageViewerCaption.textContent = imageName || "";
+    imageViewerModal.classList.remove("hidden");
+    imageViewerModal.setAttribute("aria-hidden", "false");
+  };
+
+  const closeImageViewer = () => {
+    imageViewerModal.classList.add("hidden");
+    imageViewerModal.setAttribute("aria-hidden", "true");
+    imageViewerImage.src = "";
+  };
+
+  const renderInfoModal = (info) => {
+    infoTitle.textContent = info.chat_name || "Chat";
+    infoJid.textContent = info.contact_jid || "";
+    infoType.textContent = info.is_group ? "Group" : "Direct";
+    infoUnread.textContent = String(info.unread_count || 0);
+    infoArchived.textContent = info.is_archived ? "Yes" : "No";
+    infoMuted.textContent = info.muted_until ? formatDate(info.muted_until) : "Not muted";
+
+    const titleForAvatar = info.chat_name || info.contact_jid || "Chat";
+    renderAvatarNode(infoAvatar, info, titleForAvatar);
+
+    if (!info.group) {
+      groupInfoNav.classList.add("hidden");
+      groupSection.classList.add("hidden");
+      groupMembers.innerHTML = "";
+      groupMemberCountSummary.textContent = "";
+      setInfoView("info");
+      return;
+    }
+
+    groupInfoNav.classList.remove("hidden");
+    groupSection.classList.remove("hidden");
+    groupCreator.textContent = info.group.creator_jid || "Unknown";
+    groupOwner.textContent = info.group.owner_jid || "Unknown";
+    groupMemberCount.textContent = String(info.group.member_count || 0);
+    groupMemberCountSummary.textContent = `${String(info.group.member_count || 0)} members`;
+    groupMembers.innerHTML = (info.group.members || [])
+      .map((member) => {
+        const admin = member.is_admin ? "Admin" : "";
+        return `
+          <li class="group-member-row">
+            <div class="group-member-main">
+              ${memberAvatarMarkup(member, "avatar-sm")}
+              <div>
+                <div class="group-member-name">${escapeHtml(member.name || "Unknown")}</div>
+                <div class="member-jid">${escapeHtml(member.jid || "")}</div>
+              </div>
+            </div>
+            <div class="group-member-right">
+              <span class="group-member-role">${escapeHtml(admin)}</span>
+              <span class="group-member-chevron">›</span>
+            </div>
+          </li>
+        `;
+      })
+      .join("");
+    setInfoView("members");
+  };
+
+  const openInfoModal = async () => {
+    if (!state.selectedChatId) {
+      return;
+    }
+    const cacheKey = String(state.selectedChatId);
+    if (!state.infoCache[cacheKey]) {
+      const response = await fetch(`/api/chats/${state.selectedChatId}/info`);
+      if (!response.ok) {
+        return;
+      }
+      state.infoCache[cacheKey] = await response.json();
+    }
+    renderInfoModal(state.infoCache[cacheKey]);
+    infoModal.classList.remove("hidden");
+    infoModal.setAttribute("aria-hidden", "false");
+  };
+
+  const setupResizer = () => {
+    const storedWidth = Number.parseInt(window.localStorage.getItem(SIDEBAR_WIDTH_KEY) || "", 10);
+    if (!Number.isNaN(storedWidth)) {
+      document.documentElement.style.setProperty("--sidebar-width", `${clamp(storedWidth, 280, 640)}px`);
+    }
+
+    sidebarResizer.addEventListener("pointerdown", (event) => {
+      if (window.innerWidth <= 980) {
+        return;
+      }
+      event.preventDefault();
+      document.body.classList.add("is-resizing");
+
+      const onMove = (moveEvent) => {
+        const maxWidth = Math.max(420, window.innerWidth - 320);
+        const nextWidth = clamp(moveEvent.clientX, 280, Math.min(640, maxWidth));
+        document.documentElement.style.setProperty("--sidebar-width", `${nextWidth}px`);
+      };
+
+      const onUp = () => {
+        document.body.classList.remove("is-resizing");
+        const computedWidth = Number.parseInt(
+          getComputedStyle(document.documentElement).getPropertyValue("--sidebar-width"),
+          10
+        );
+        if (!Number.isNaN(computedWidth)) {
+          window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(computedWidth));
+        }
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+  };
+
+  tabsContainer.addEventListener("click", async (event) => {
+    const target = event.target.closest(".tab");
+    if (!target) {
+      return;
+    }
+    const nextTab = target.dataset.tab;
+    if (!nextTab || nextTab === state.tab) {
+      return;
+    }
+    state.tab = nextTab;
+    state.selectedChatId = null;
+    state.messages = [];
+    state.nextBefore = null;
+    await fetchChats({ reset: true });
+  });
+
+  chatListNode.addEventListener("click", async (event) => {
+    const target = event.target.closest(".chat-row");
+    if (!target) {
+      return;
+    }
+    const chatId = Number.parseInt(target.dataset.chatId || "", 10);
+    if (Number.isNaN(chatId) || chatId === state.selectedChatId) {
+      return;
+    }
+    state.selectedChatId = chatId;
+    await fetchMessages({ replaceCurrent: true, preservePosition: false });
+  });
+
+  messagesNode.addEventListener("scroll", async () => {
+    if (messagesNode.scrollTop > 80 || !state.nextBefore || state.loadingOlder) {
+      return;
+    }
+    await fetchMessages({ replaceCurrent: false, preservePosition: true });
+  });
+
+  messagesNode.addEventListener("click", (event) => {
+    const target = event.target.closest(".media-image-trigger");
+    if (!target) {
+      return;
+    }
+    const imageUrl = target.dataset.imageUrl || "";
+    if (!imageUrl) {
+      return;
+    }
+    openImageViewer(imageUrl, target.dataset.imageName || "");
+  });
+
+  chatListNode.addEventListener("scroll", async () => {
+    if (!state.hasMoreChats || state.loadingChats) {
+      return;
+    }
+    const threshold = 120;
+    const distanceFromBottom = chatListNode.scrollHeight - chatListNode.scrollTop - chatListNode.clientHeight;
+    if (distanceFromBottom <= threshold) {
+      await fetchChats({ reset: false });
+    }
+  });
+
+  chatContactButton.addEventListener("click", openInfoModal);
+  groupInfoNav.addEventListener("click", (event) => {
+    const target = event.target.closest(".info-nav-btn");
+    if (!target) {
+      return;
+    }
+    const viewName = target.dataset.infoView;
+    if (!viewName) {
+      return;
+    }
+    setInfoView(viewName);
+  });
+  infoCloseButton.addEventListener("click", closeInfoModal);
+  imageViewerCloseButton.addEventListener("click", closeImageViewer);
+  infoModal.addEventListener("click", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.dataset.closeModal === "true") {
+      closeInfoModal();
+    }
+  });
+  imageViewerModal.addEventListener("click", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.dataset.closeImageViewer === "true") {
+      closeImageViewer();
+    }
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeInfoModal();
+      closeImageViewer();
+    }
+  });
+
+  let searchTimer = null;
+  searchInput.addEventListener("input", () => {
+    window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(async () => {
+      state.query = searchInput.value.trim();
+      await fetchChats({ reset: true });
+    }, 220);
+  });
+
+  syncThemeListener();
+  setupResizer();
+  setTabCounts();
+  syncTabUI();
+  renderChats();
+  renderMessages();
+  if (state.selectedChatId) {
+    messagesNode.scrollTop = messagesNode.scrollHeight;
+  }
+  updateUrl();
+})();
