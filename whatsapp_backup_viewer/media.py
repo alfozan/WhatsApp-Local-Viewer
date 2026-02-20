@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import mimetypes
+import sqlite3
 from functools import lru_cache
 from pathlib import Path
 
@@ -132,6 +133,66 @@ def _jid_local_part(jid: str | None) -> str:
     return jid.split("@", 1)[0]
 
 
+def _local_part(raw_jid: str | None) -> str:
+    if not raw_jid:
+        return ""
+    value = raw_jid.strip().lower()
+    if not value:
+        return ""
+    if "@" in value:
+        return value.split("@", 1)[0]
+    return value
+
+
+@lru_cache(maxsize=8)
+def _contact_alias_index(contacts_db_path_value: str) -> dict[str, tuple[str, ...]]:
+    contacts_db_path = Path(contacts_db_path_value)
+    if not contacts_db_path.exists():
+        return {}
+
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(f"file:{contacts_db_path}?mode=ro", uri=True, timeout=5)
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT COALESCE(ZLID, '') AS lid, COALESCE(ZWHATSAPPID, '') AS whatsapp_id
+            FROM ZWAADDRESSBOOKCONTACT
+            WHERE COALESCE(ZLID, '') <> '' OR COALESCE(ZWHATSAPPID, '') <> ''
+            """
+        ).fetchall()
+    except sqlite3.DatabaseError:
+        return {}
+    finally:
+        if connection is not None:
+            connection.close()
+
+    aliases: dict[str, set[str]] = {}
+    for row in rows:
+        pair_ids = {_local_part(str(row["lid"])), _local_part(str(row["whatsapp_id"]))}
+        pair_ids.discard("")
+        if not pair_ids:
+            continue
+        for key in pair_ids:
+            aliases.setdefault(key, set()).update(pair_ids)
+
+    return {key: tuple(sorted(values)) for key, values in aliases.items() if values}
+
+
+def _candidate_profile_ids(contact_jid: str | None, contacts_db_path: Path | None) -> list[str]:
+    local_id = _jid_local_part(contact_jid)
+    if not local_id:
+        return []
+
+    candidate_ids: list[str] = [local_id]
+    if contacts_db_path:
+        alias_index = _contact_alias_index(str(contacts_db_path.resolve()))
+        for alias_id in alias_index.get(local_id.lower(), ()):
+            if alias_id and alias_id not in candidate_ids:
+                candidate_ids.append(alias_id)
+    return candidate_ids
+
+
 @lru_cache(maxsize=8)
 def _profile_index_for_backup(backup_dir_value: str) -> dict[str, str]:
     profile_dir = Path(backup_dir_value) / "Media" / "Profile"
@@ -151,9 +212,14 @@ def _profile_index_for_backup(backup_dir_value: str) -> dict[str, str]:
     return {local_id: value[1] for local_id, value in indexed.items()}
 
 
-def find_profile_media_for_jid(contact_jid: str | None, backup_dir: Path) -> str | None:
-    local_id = _jid_local_part(contact_jid)
-    if not local_id:
-        return None
+def find_profile_media_for_jid(
+    contact_jid: str | None,
+    backup_dir: Path,
+    contacts_db_path: Path | None = None,
+) -> str | None:
     index = _profile_index_for_backup(str(backup_dir.resolve()))
-    return index.get(local_id)
+    for candidate_id in _candidate_profile_ids(contact_jid, contacts_db_path):
+        match = index.get(candidate_id)
+        if match:
+            return match
+    return None

@@ -334,6 +334,12 @@ body.is-resizing .sidebar-resizer {
   word-wrap: break-word;
 }
 
+.message-link {
+  color: #53bdeb;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .message-meta {
   margin-top: 6px;
   color: var(--text-muted);

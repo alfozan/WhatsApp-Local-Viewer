@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any, cast
 
@@ -45,7 +46,11 @@ def _resolve_avatar_attachment(
     contact_jid: str | None = None,
 ) -> dict[str, Any] | None:
     app_config = _get_app_config()
-    fallback_path = find_profile_media_for_jid(contact_jid, app_config.backup_dir) if contact_jid else None
+    fallback_path = (
+        find_profile_media_for_jid(contact_jid, app_config.backup_dir, app_config.contacts_db_path)
+        if contact_jid
+        else None
+    )
 
     seen: set[str] = set()
     for raw_path in [*candidate_paths, fallback_path]:
@@ -57,6 +62,147 @@ def _resolve_avatar_attachment(
         if attachment.available:
             return attachment.to_dict()
     return None
+
+
+def _jid_local_part(jid: str) -> str:
+    normalized = jid.strip().lower()
+    if not normalized:
+        return ""
+    if "@" in normalized:
+        return normalized.split("@", 1)[0]
+    return normalized
+
+
+def _member_label_from_jid(jid: str) -> str:
+    local = _jid_local_part(jid)
+    return local or jid
+
+
+def _should_replace_member_name(current_name: str, jid: str) -> bool:
+    cleaned = current_name.strip()
+    if not cleaned:
+        return True
+
+    lowered = cleaned.lower()
+    local = _jid_local_part(jid)
+    if lowered in {".", "-", "unknown"}:
+        return True
+    if lowered == jid.strip().lower():
+        return True
+    if local and lowered == local:
+        return True
+    if local and local.isdigit() and cleaned.replace(" ", "") == local:
+        return True
+    return False
+
+
+CONTACT_MEMBER_LOOKUP_QUERY = """
+    SELECT
+        COALESCE(NULLIF(ZFULLNAME, ''), NULLIF(ZGIVENNAME, ''), '') AS resolved_name,
+        COALESCE(ZLID, '') AS lid,
+        COALESCE(ZWHATSAPPID, '') AS whatsapp_id
+    FROM ZWAADDRESSBOOKCONTACT
+    WHERE COALESCE(ZLID, '') = ?
+       OR COALESCE(ZWHATSAPPID, '') = ?
+       OR (
+            CASE
+                WHEN instr(COALESCE(ZLID, ''), '@') > 0
+                    THEN substr(ZLID, 1, instr(ZLID, '@') - 1)
+                ELSE COALESCE(ZLID, '')
+            END
+        ) = ?
+       OR (
+            CASE
+                WHEN instr(COALESCE(ZWHATSAPPID, ''), '@') > 0
+                    THEN substr(ZWHATSAPPID, 1, instr(ZWHATSAPPID, '@') - 1)
+                ELSE COALESCE(ZWHATSAPPID, '')
+            END
+        ) = ?
+    ORDER BY
+        CASE WHEN COALESCE(ZLID, '') = ? OR COALESCE(ZWHATSAPPID, '') = ? THEN 0 ELSE 1 END,
+        Z_PK DESC
+    LIMIT 1
+"""
+
+
+def _lookup_member_contact(
+    connection: sqlite3.Connection,
+    member_jid: str,
+) -> dict[str, str]:
+    normalized_jid = member_jid.strip().lower()
+    local_part = _jid_local_part(normalized_jid)
+    row = connection.execute(
+        CONTACT_MEMBER_LOOKUP_QUERY,
+        [normalized_jid, normalized_jid, local_part, local_part, normalized_jid, normalized_jid],
+    ).fetchone()
+    if row is None:
+        return {"identity_key": f"jid:{normalized_jid}", "name": ""}
+
+    lid = str(row["lid"] or "").strip().lower()
+    whatsapp_id = str(row["whatsapp_id"] or "").strip().lower()
+    identity_key = lid or whatsapp_id or f"jid:{normalized_jid}"
+    resolved_name = str(row["resolved_name"] or "").strip()
+    return {"identity_key": identity_key, "name": resolved_name}
+
+
+def _lookup_contacts_for_members(member_jids: list[str]) -> dict[str, dict[str, str]]:
+    app_config = _get_app_config()
+    if not app_config.contacts_db_path.exists():
+        return {}
+
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(f"file:{app_config.contacts_db_path}?mode=ro", uri=True, timeout=5)
+        connection.row_factory = sqlite3.Row
+    except sqlite3.DatabaseError:
+        return {}
+    resolved_lookup: dict[str, dict[str, str]] = {}
+    try:
+        normalized_jids = [jid.strip().lower() for jid in member_jids if jid and jid.strip()]
+        unique_jids = list(dict.fromkeys(normalized_jids))
+        for jid in unique_jids:
+            resolved_lookup[jid] = _lookup_member_contact(connection, jid)
+    finally:
+        if connection is not None:
+            connection.close()
+    return resolved_lookup
+
+
+def _normalize_group_members(raw_members: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not raw_members:
+        return []
+
+    members = [dict(member) for member in raw_members if isinstance(member, dict)]
+    has_active_flags = any(bool(member.get("is_active")) for member in members)
+    if has_active_flags:
+        members = [member for member in members if bool(member.get("is_active"))]
+
+    jids = [str(member.get("jid") or "").strip() for member in members if str(member.get("jid") or "").strip()]
+    contact_lookup = _lookup_contacts_for_members(jids)
+
+    deduped_members: list[dict[str, Any]] = []
+    seen_identity_keys: set[str] = set()
+    for member in members:
+        member_jid = str(member.get("jid") or "").strip()
+        normalized_jid = member_jid.lower()
+        lookup = contact_lookup.get(normalized_jid, {})
+        identity_key = str(lookup.get("identity_key") or f"jid:{normalized_jid}")
+        if identity_key in seen_identity_keys:
+            continue
+        seen_identity_keys.add(identity_key)
+
+        current_name = str(member.get("name") or "").strip()
+        contact_name = str(lookup.get("name") or "").strip()
+        if contact_name and (
+            _should_replace_member_name(current_name, member_jid) or len(contact_name) > len(current_name)
+        ):
+            member["name"] = contact_name
+        elif not current_name:
+            member["name"] = _member_label_from_jid(member_jid) or "Unknown"
+
+        deduped_members.append(member)
+
+    return deduped_members
 
 
 def _serialize_chat(chat: ChatSummary) -> dict[str, Any]:
@@ -92,6 +238,7 @@ def _serialize_chat_info_payload(info: dict[str, Any]) -> dict[str, Any]:
     if payload.get("group") and isinstance(payload["group"], dict):
         members = payload["group"].get("members") or []
         if isinstance(members, list):
+            members = _normalize_group_members(members)
             serialized_members: list[dict[str, Any]] = []
             for member in members:
                 member_payload = dict(member)
@@ -101,6 +248,7 @@ def _serialize_chat_info_payload(info: dict[str, Any]) -> dict[str, Any]:
                 )
                 serialized_members.append(member_payload)
             payload["group"]["members"] = serialized_members
+            payload["group"]["member_count"] = len(serialized_members)
     return payload
 
 
@@ -235,8 +383,8 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
     )
     app.config.from_mapping(config_overrides or {})
 
-    backup_dir_override = app.config.get("WHATSAPP_BACKUP_DIR")
-    app.config["APP_CONFIG"] = AppConfig.from_env(str(backup_dir_override) if backup_dir_override else None)
+    backup_dir_override = app.config.get("BACKUP_DIR")
+    app.config["APP_CONFIG"] = AppConfig.from_path(str(backup_dir_override) if backup_dir_override else None)
     app.config.setdefault("JSON_AS_ASCII", False)
     app.teardown_appcontext(close_db)
     app.register_blueprint(viewer)

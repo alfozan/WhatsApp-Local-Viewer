@@ -9,12 +9,31 @@ from .utils import coredata_to_datetime, decode_cursor, encode_cursor
 VALID_TABS = {"all", "groups", "archived"}
 
 TAB_COUNT_QUERIES = {
-    "all": "SELECT COUNT(*) AS count_value FROM ZWACHATSESSION c WHERE COALESCE(c.ZARCHIVED, 0) = 0",
+    "all": (
+        "SELECT COUNT(*) AS count_value FROM ZWACHATSESSION c "
+        "WHERE COALESCE(c.ZARCHIVED, 0) = 0 "
+        "AND COALESCE(c.ZCONTACTJID, '') <> '' "
+        "AND COALESCE(c.ZCONTACTJID, '') <> '0@status' "
+        "AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status' "
+        "AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@newsletter'"
+    ),
     "groups": (
         "SELECT COUNT(*) AS count_value FROM ZWACHATSESSION c "
-        "WHERE COALESCE(c.ZARCHIVED, 0) = 0 AND COALESCE(c.ZCONTACTJID, '') LIKE '%@g.us'"
+        "WHERE COALESCE(c.ZARCHIVED, 0) = 0 "
+        "AND COALESCE(c.ZCONTACTJID, '') <> '' "
+        "AND COALESCE(c.ZCONTACTJID, '') <> '0@status' "
+        "AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status' "
+        "AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@newsletter' "
+        "AND COALESCE(c.ZCONTACTJID, '') LIKE '%@g.us'"
     ),
-    "archived": "SELECT COUNT(*) AS count_value FROM ZWACHATSESSION c WHERE COALESCE(c.ZARCHIVED, 0) = 1",
+    "archived": (
+        "SELECT COUNT(*) AS count_value FROM ZWACHATSESSION c "
+        "WHERE COALESCE(c.ZARCHIVED, 0) = 1 "
+        "AND COALESCE(c.ZCONTACTJID, '') <> '' "
+        "AND COALESCE(c.ZCONTACTJID, '') <> '0@status' "
+        "AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status' "
+        "AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@newsletter'"
+    ),
 }
 
 TAB_CHAT_QUERIES = {
@@ -72,6 +91,10 @@ TAB_CHAT_QUERIES = {
             ) AS avatar_path
         FROM ZWACHATSESSION c
         WHERE COALESCE(c.ZARCHIVED, 0) = 0
+          AND COALESCE(c.ZCONTACTJID, '') <> ''
+          AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@newsletter'
         ORDER BY
             CASE
                 WHEN COALESCE(c.ZCONTACTJID, '') = '0@status' THEN 1
@@ -135,7 +158,12 @@ TAB_CHAT_QUERIES = {
                 )
             ) AS avatar_path
         FROM ZWACHATSESSION c
-        WHERE COALESCE(c.ZARCHIVED, 0) = 0 AND COALESCE(c.ZCONTACTJID, '') LIKE '%@g.us'
+        WHERE COALESCE(c.ZARCHIVED, 0) = 0
+          AND COALESCE(c.ZCONTACTJID, '') <> ''
+          AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@newsletter'
+          AND COALESCE(c.ZCONTACTJID, '') LIKE '%@g.us'
         ORDER BY
             CASE
                 WHEN COALESCE(c.ZCONTACTJID, '') = '0@status' THEN 1
@@ -200,6 +228,10 @@ TAB_CHAT_QUERIES = {
             ) AS avatar_path
         FROM ZWACHATSESSION c
         WHERE COALESCE(c.ZARCHIVED, 0) = 1
+          AND COALESCE(c.ZCONTACTJID, '') <> ''
+          AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@newsletter'
         ORDER BY
             CASE
                 WHEN COALESCE(c.ZCONTACTJID, '') = '0@status' THEN 1
@@ -267,6 +299,10 @@ TAB_CHAT_SEARCH_QUERIES = {
             ) AS avatar_path
         FROM ZWACHATSESSION c
         WHERE COALESCE(c.ZARCHIVED, 0) = 0
+          AND COALESCE(c.ZCONTACTJID, '') <> ''
+          AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@newsletter'
           AND (COALESCE(c.ZPARTNERNAME, '') LIKE ? OR COALESCE(c.ZCONTACTJID, '') LIKE ?
                OR COALESCE(c.ZLASTMESSAGETEXT, '') LIKE ?)
         ORDER BY
@@ -333,6 +369,10 @@ TAB_CHAT_SEARCH_QUERIES = {
             ) AS avatar_path
         FROM ZWACHATSESSION c
         WHERE COALESCE(c.ZARCHIVED, 0) = 0
+          AND COALESCE(c.ZCONTACTJID, '') <> ''
+          AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@newsletter'
           AND COALESCE(c.ZCONTACTJID, '') LIKE '%@g.us'
           AND (COALESCE(c.ZPARTNERNAME, '') LIKE ? OR COALESCE(c.ZCONTACTJID, '') LIKE ?
                OR COALESCE(c.ZLASTMESSAGETEXT, '') LIKE ?)
@@ -400,6 +440,10 @@ TAB_CHAT_SEARCH_QUERIES = {
             ) AS avatar_path
         FROM ZWACHATSESSION c
         WHERE COALESCE(c.ZARCHIVED, 0) = 1
+          AND COALESCE(c.ZCONTACTJID, '') <> ''
+          AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
+          AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@newsletter'
           AND (COALESCE(c.ZPARTNERNAME, '') LIKE ? OR COALESCE(c.ZCONTACTJID, '') LIKE ?
                OR COALESCE(c.ZLASTMESSAGETEXT, '') LIKE ?)
         ORDER BY

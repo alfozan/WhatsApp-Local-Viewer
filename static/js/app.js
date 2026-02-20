@@ -65,6 +65,23 @@
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;");
 
+  const linkifyText = (value) => {
+    const escaped = escapeHtml(value || "");
+    return escaped.replace(/(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi, (token) => {
+      let urlToken = token;
+      let trailing = "";
+      while (/[),.!?;:]$/.test(urlToken)) {
+        trailing = urlToken.slice(-1) + trailing;
+        urlToken = urlToken.slice(0, -1);
+      }
+      if (!urlToken) {
+        return token;
+      }
+      const href = urlToken.toLowerCase().startsWith("www.") ? `https://${urlToken}` : urlToken;
+      return `<a class="message-link" href="${href}" target="_blank" rel="noopener noreferrer">${urlToken}</a>${trailing}`;
+    });
+  };
+
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
   const formatDate = (value) => {
@@ -279,7 +296,7 @@
       .map((message) => {
         const directionClass = message.is_from_me ? "outgoing" : "incoming";
         const sender = message.sender_name || (chat ? chat.chat_name : "Unknown");
-        const text = message.text ? `<div class="message-text">${escapeHtml(message.text)}</div>` : "";
+        const text = message.text ? `<div class="message-text">${linkifyText(message.text)}</div>` : "";
         const media = renderMedia(message.media);
 
         return `
@@ -292,6 +309,35 @@
         `;
       })
       .join("");
+  };
+
+  const scrollMessagesToBottom = ({ watchMedia = false } = {}) => {
+    const applyBottom = () => {
+      messagesNode.scrollTop = messagesNode.scrollHeight;
+    };
+
+    applyBottom();
+    window.requestAnimationFrame(() => {
+      applyBottom();
+      window.requestAnimationFrame(applyBottom);
+    });
+
+    if (!watchMedia) {
+      return;
+    }
+
+    messagesNode.querySelectorAll("img, video").forEach((mediaNode) => {
+      if (mediaNode.dataset.bottomSyncBound === "1") {
+        return;
+      }
+      mediaNode.dataset.bottomSyncBound = "1";
+      const syncBottom = () => {
+        window.requestAnimationFrame(applyBottom);
+      };
+      mediaNode.addEventListener("load", syncBottom, { once: true });
+      mediaNode.addEventListener("loadeddata", syncBottom, { once: true });
+      mediaNode.addEventListener("error", syncBottom, { once: true });
+    });
   };
 
   const setInfoView = (viewName) => {
@@ -386,7 +432,7 @@
     updateUrl();
 
     if (replaceCurrent) {
-      messagesNode.scrollTop = messagesNode.scrollHeight;
+      scrollMessagesToBottom({ watchMedia: true });
     } else if (preservePosition) {
       const newHeight = messagesNode.scrollHeight;
       messagesNode.scrollTop = newHeight - previousHeight + previousTop;
@@ -628,7 +674,7 @@
   renderChats();
   renderMessages();
   if (state.selectedChatId) {
-    messagesNode.scrollTop = messagesNode.scrollHeight;
+    scrollMessagesToBottom({ watchMedia: true });
   }
   updateUrl();
 })();

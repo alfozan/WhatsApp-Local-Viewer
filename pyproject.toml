@@ -1,7 +1,7 @@
 [project]
-name = "python-project-template"
+name = "whatsapp-backup-viewer"
 version = "0.1.0"
-description = "Local Flask app to browse WhatsApp iOS backup history."
+description = "Local read-only Flask app to browse WhatsApp backup chats and media."
 readme = "README.md"
 requires-python = "==3.14.*"
 dependencies = [
