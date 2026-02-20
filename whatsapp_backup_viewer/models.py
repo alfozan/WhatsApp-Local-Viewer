@@ -6,6 +6,8 @@ from datetime import datetime
 
 @dataclass(frozen=True)
 class MediaAttachment:
+    """Serializable descriptor for a media file associated with a message."""
+
     raw_path: str
     url: str
     mime_type: str
@@ -14,6 +16,7 @@ class MediaAttachment:
     available: bool
 
     def to_dict(self) -> dict[str, str | bool]:
+        """Convert media attachment data into JSON-ready dict form."""
         return {
             "raw_path": self.raw_path,
             "url": self.url,
@@ -26,6 +29,8 @@ class MediaAttachment:
 
 @dataclass(frozen=True)
 class ChatSummary:
+    """Sidebar chat list item loaded from `ZWACHATSESSION`."""
+
     chat_id: int
     chat_name: str
     contact_jid: str
@@ -37,6 +42,7 @@ class ChatSummary:
     avatar_path: str | None
 
     def to_dict(self) -> dict[str, str | int | bool | None]:
+        """Convert chat summary into JSON-ready dict form."""
         return {
             "chat_id": self.chat_id,
             "chat_name": self.chat_name,
@@ -52,6 +58,8 @@ class ChatSummary:
 
 @dataclass(frozen=True)
 class MessageItem:
+    """Message row loaded from `ZWAMESSAGE` and related tables."""
+
     message_id: int
     chat_id: int
     message_date: datetime | None
@@ -59,4 +67,7 @@ class MessageItem:
     message_type: int
     text: str
     sender_name: str
+    sender_jid: str | None
     media_path: str | None
+    vcard_name: str | None
+    vcard_value: str | None

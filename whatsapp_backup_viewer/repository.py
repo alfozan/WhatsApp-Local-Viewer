@@ -525,6 +525,8 @@ MESSAGE_QUERY = """
         m.ZTEXT AS text,
         m.ZFROMJID AS from_jid,
         mi.ZMEDIALOCALPATH AS media_path,
+        mi.ZVCARDNAME AS vcard_name,
+        mi.ZVCARDSTRING AS vcard_value,
         gm.ZCONTACTNAME AS group_contact_name,
         gm.ZFIRSTNAME AS group_first_name,
         gm.ZMEMBERJID AS group_member_jid,
@@ -550,6 +552,7 @@ MESSAGE_QUERY = """
     LEFT JOIN ZWAGROUPMEMBER gm ON gm.Z_PK = m.ZGROUPMEMBER
     LEFT JOIN ZWACHATSESSION cs ON cs.Z_PK = m.ZCHATSESSION
     WHERE m.ZCHATSESSION = ?
+      AND COALESCE(m.ZMESSAGETYPE, 0) <> 6
     ORDER BY m.ZMESSAGEDATE DESC, m.Z_PK DESC
     LIMIT ?
 """
@@ -564,6 +567,8 @@ MESSAGE_QUERY_WITH_CURSOR = """
         m.ZTEXT AS text,
         m.ZFROMJID AS from_jid,
         mi.ZMEDIALOCALPATH AS media_path,
+        mi.ZVCARDNAME AS vcard_name,
+        mi.ZVCARDSTRING AS vcard_value,
         gm.ZCONTACTNAME AS group_contact_name,
         gm.ZFIRSTNAME AS group_first_name,
         gm.ZMEMBERJID AS group_member_jid,
@@ -589,6 +594,7 @@ MESSAGE_QUERY_WITH_CURSOR = """
     LEFT JOIN ZWAGROUPMEMBER gm ON gm.Z_PK = m.ZGROUPMEMBER
     LEFT JOIN ZWACHATSESSION cs ON cs.Z_PK = m.ZCHATSESSION
     WHERE m.ZCHATSESSION = ?
+      AND COALESCE(m.ZMESSAGETYPE, 0) <> 6
       AND (m.ZMESSAGEDATE < ? OR (m.ZMESSAGEDATE = ? AND m.Z_PK < ?))
     ORDER BY m.ZMESSAGEDATE DESC, m.Z_PK DESC
     LIMIT ?
@@ -672,17 +678,20 @@ CONTACT_PUSH_NAME_QUERY = """
 
 
 def _validate_tab(tab: str) -> None:
+    """Validate the requested sidebar tab key."""
     if tab not in VALID_TABS:
         raise ValueError(f"Invalid tab: {tab}")
 
 
 def _jid_to_label(raw_jid: str) -> str:
+    """Return a human-friendly local-part for a JID."""
     if not raw_jid:
         return ""
     return raw_jid.split("@", 1)[0]
 
 
 def _to_chat_summary(row: sqlite3.Row) -> ChatSummary:
+    """Convert a SQL chat row into `ChatSummary`."""
     raw_name = row["chat_name"] or row["contact_jid"] or "Unknown chat"
     contact_jid = row["contact_jid"] or ""
     last_message_text = row["last_message_text"] or ""
@@ -700,6 +709,7 @@ def _to_chat_summary(row: sqlite3.Row) -> ChatSummary:
 
 
 def _tab_count(connection: sqlite3.Connection, tab: str) -> int:
+    """Return chat count for a single tab filter."""
     _validate_tab(tab)
     query = TAB_COUNT_QUERIES[tab]
     row = connection.execute(query).fetchone()
@@ -709,6 +719,7 @@ def _tab_count(connection: sqlite3.Connection, tab: str) -> int:
 
 
 def get_tab_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    """Return chat counts for all sidebar tabs."""
     return {tab: _tab_count(connection, tab) for tab in ("all", "groups", "archived")}
 
 
@@ -719,6 +730,7 @@ def list_chats(
     limit: int = 100,
     offset: int = 0,
 ) -> tuple[list[ChatSummary], dict[str, int]]:
+    """List chats for a tab with optional search, paging, and fresh counts."""
     _validate_tab(tab)
     safe_limit = max(1, min(limit, 200))
     safe_offset = max(0, offset)
@@ -735,6 +747,7 @@ def list_chats(
 
 
 def get_chat_by_id(connection: sqlite3.Connection, chat_id: int) -> ChatSummary | None:
+    """Fetch one chat summary by primary key."""
     row = connection.execute(CHAT_BY_ID_QUERY, [chat_id]).fetchone()
     if row is None:
         return None
@@ -742,14 +755,30 @@ def get_chat_by_id(connection: sqlite3.Connection, chat_id: int) -> ChatSummary 
 
 
 def _resolve_sender_name(row: sqlite3.Row) -> str:
+    """Resolve sender display name from group/direct message row fields."""
     if bool(row["is_from_me"] or 0):
         return "You"
-    for key in ("group_contact_name", "group_first_name", "group_push_name", "from_push_name", "direct_chat_name"):
-        value = row[key]
-        if value:
-            return str(value)
-    if row["group_member_jid"]:
-        return _jid_to_label(str(row["group_member_jid"]))
+
+    group_member_jid = str(row["group_member_jid"] or "").strip()
+    has_group_sender = bool(
+        group_member_jid or row["group_contact_name"] or row["group_first_name"] or row["group_push_name"]
+    )
+    if has_group_sender:
+        for key in ("group_contact_name", "group_first_name", "group_push_name"):
+            value = row[key]
+            if value:
+                return str(value)
+        if group_member_jid:
+            return _jid_to_label(group_member_jid)
+
+    direct_chat_name = row["direct_chat_name"]
+    if direct_chat_name:
+        return str(direct_chat_name)
+
+    from_push_name = row["from_push_name"]
+    if from_push_name:
+        return str(from_push_name)
+
     if row["from_jid"]:
         return _jid_to_label(str(row["from_jid"]))
     return "Unknown"
@@ -761,6 +790,7 @@ def get_messages(
     before: str | None = None,
     limit: int = 100,
 ) -> tuple[list[MessageItem], str | None]:
+    """Fetch paginated messages for a chat ordered newest-first."""
     safe_limit = max(1, min(limit, 200))
     decoded_cursor = decode_cursor(before)
     if before and decoded_cursor is None:
@@ -789,7 +819,14 @@ def get_messages(
             message_type=int(row["message_type"] or 0),
             text=str(row["text"] or ""),
             sender_name=_resolve_sender_name(row),
+            sender_jid=(
+                str(row["group_member_jid"] or "").strip()
+                or str(row["from_jid"] or "").strip()
+                or None
+            ),
             media_path=str(row["media_path"]) if row["media_path"] else None,
+            vcard_name=str(row["vcard_name"]) if row["vcard_name"] else None,
+            vcard_value=str(row["vcard_value"]) if row["vcard_value"] else None,
         )
         for row in visible_rows
     ]
@@ -803,6 +840,7 @@ def get_messages(
 
 
 def get_chat_info(connection: sqlite3.Connection, chat_id: int) -> dict[str, Any] | None:
+    """Fetch detailed chat info plus group metadata/member rows when applicable."""
     chat = get_chat_by_id(connection, chat_id)
     if chat is None:
         return None

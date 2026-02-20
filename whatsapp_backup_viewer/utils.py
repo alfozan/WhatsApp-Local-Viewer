@@ -8,18 +8,21 @@ APPLE_EPOCH_OFFSET = 978307200
 
 
 def coredata_to_datetime(value: float | int | None) -> datetime | None:
+    """Convert a Core Data timestamp into a UTC datetime."""
     if value is None:
         return None
     return datetime.fromtimestamp(float(value) + APPLE_EPOCH_OFFSET, tz=UTC)
 
 
 def encode_cursor(message_date: float, message_id: int) -> str:
+    """Encode a message pagination cursor into URL-safe text."""
     payload = {"d": float(message_date), "i": int(message_id)}
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
 def decode_cursor(cursor: str | None) -> tuple[float, int] | None:
+    """Decode a pagination cursor into `(message_date, message_id)`."""
     if not cursor:
         return None
     padding = "=" * (-len(cursor) % 4)

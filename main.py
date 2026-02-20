@@ -6,6 +6,7 @@ from whatsapp_backup_viewer.app import create_app
 
 
 def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for running the local Flask server."""
     parser = argparse.ArgumentParser(description="Run WhatsApp Backup Viewer.")
     parser.add_argument(
         "--backup-dir",
@@ -18,6 +19,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Create and run the Flask app from CLI arguments."""
     args = _parse_args()
     app = create_app({"BACKUP_DIR": args.backup_dir})
     app.run(host=args.host, port=args.port, debug=False)

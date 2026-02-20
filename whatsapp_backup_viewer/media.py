@@ -11,11 +11,13 @@ from .models import MediaAttachment
 
 
 def encode_media_token(raw_path: str) -> str:
+    """Encode a media path for use in `/media/...` URLs."""
     encoded = base64.urlsafe_b64encode(raw_path.encode("utf-8"))
     return encoded.decode("ascii").rstrip("=")
 
 
 def decode_media_token(token: str) -> str | None:
+    """Decode a media path token from the `/media/...` route."""
     padding = "=" * (-len(token) % 4)
     try:
         decoded = base64.urlsafe_b64decode(token + padding).decode("utf-8")
@@ -25,6 +27,7 @@ def decode_media_token(token: str) -> str | None:
 
 
 def normalize_media_path(raw_path: str | None) -> str:
+    """Normalize backup-relative media paths across WhatsApp variants."""
     if not raw_path:
         return ""
     cleaned = raw_path.strip()
@@ -42,6 +45,7 @@ def normalize_media_path(raw_path: str | None) -> str:
 
 
 def _is_inside(base_dir: Path, candidate: Path) -> bool:
+    """Return whether `candidate` is inside `base_dir`."""
     try:
         candidate.relative_to(base_dir)
     except ValueError:
@@ -50,6 +54,7 @@ def _is_inside(base_dir: Path, candidate: Path) -> bool:
 
 
 def _find_with_suffixes(candidate: Path, suffixes: list[str], backup_root: Path) -> Path | None:
+    """Try file suffix fallbacks for a media candidate without extension."""
     if candidate.suffix:
         return None
     for suffix in suffixes:
@@ -60,12 +65,14 @@ def _find_with_suffixes(candidate: Path, suffixes: list[str], backup_root: Path)
 
 
 def _resolve_candidate(candidate: Path, suffixes: list[str], backup_root: Path) -> Path | None:
+    """Resolve a candidate path directly or by extension fallback."""
     if candidate.is_file():
         return candidate
     return _find_with_suffixes(candidate, suffixes, backup_root)
 
 
 def resolve_media_path(raw_path: str | None, backup_dir: Path) -> Path | None:
+    """Resolve a raw WhatsApp media path to an existing file path."""
     normalized = normalize_media_path(raw_path)
     if not normalized:
         return None
@@ -98,6 +105,7 @@ def resolve_media_path(raw_path: str | None, backup_dir: Path) -> Path | None:
 
 
 def classify_media(file_path: Path | None) -> tuple[str, str]:
+    """Classify media into `(mime_type, kind)` for UI rendering."""
     if file_path and file_path.suffix.lower() == ".thumb":
         return "image/jpeg", "image"
     mime_type, _ = mimetypes.guess_type(file_path.name if file_path else "")
@@ -112,6 +120,7 @@ def classify_media(file_path: Path | None) -> tuple[str, str]:
 
 
 def build_media_attachment(raw_path: str, media_url: str, backup_dir: Path) -> MediaAttachment:
+    """Build a `MediaAttachment` payload from a raw media path."""
     resolved = resolve_media_path(raw_path, backup_dir)
     mime_type, kind = classify_media(resolved)
     file_name = resolved.name if resolved else Path(raw_path).name
@@ -126,6 +135,7 @@ def build_media_attachment(raw_path: str, media_url: str, backup_dir: Path) -> M
 
 
 def _jid_local_part(jid: str | None) -> str:
+    """Return the local-part of a JID-like value."""
     if not jid:
         return ""
     if "@" not in jid:
@@ -134,6 +144,7 @@ def _jid_local_part(jid: str | None) -> str:
 
 
 def _local_part(raw_jid: str | None) -> str:
+    """Normalize and extract local-part text from any JID-like value."""
     if not raw_jid:
         return ""
     value = raw_jid.strip().lower()
@@ -144,8 +155,24 @@ def _local_part(raw_jid: str | None) -> str:
     return value
 
 
+def _profile_file_rank(file_path: Path, local_id: str) -> tuple[int, ...]:
+    """Extract sortable numeric suffix parts from a profile filename."""
+    prefix = f"{local_id}-"
+    name = file_path.name
+    if not name.startswith(prefix):
+        return ()
+
+    stem_parts = file_path.stem.removeprefix(prefix).split("-")
+    numeric_parts: list[int] = []
+    for part in stem_parts:
+        if part.isdigit():
+            numeric_parts.append(int(part))
+    return tuple(numeric_parts)
+
+
 @lru_cache(maxsize=8)
 def _contact_alias_index(contacts_db_path_value: str) -> dict[str, tuple[str, ...]]:
+    """Build mapping of contact ID aliases from the contacts database."""
     contacts_db_path = Path(contacts_db_path_value)
     if not contacts_db_path.exists():
         return {}
@@ -180,6 +207,7 @@ def _contact_alias_index(contacts_db_path_value: str) -> dict[str, tuple[str, ..
 
 
 def _candidate_profile_ids(contact_jid: str | None, contacts_db_path: Path | None) -> list[str]:
+    """Return ordered candidate profile IDs for a contact JID."""
     local_id = _jid_local_part(contact_jid)
     if not local_id:
         return []
@@ -195,21 +223,23 @@ def _candidate_profile_ids(contact_jid: str | None, contacts_db_path: Path | Non
 
 @lru_cache(maxsize=8)
 def _profile_index_for_backup(backup_dir_value: str) -> dict[str, str]:
+    """Index latest profile image path by local identifier."""
     profile_dir = Path(backup_dir_value) / "Media" / "Profile"
     if not profile_dir.exists():
         return {}
 
-    indexed: dict[str, tuple[float, str]] = {}
+    indexed: dict[str, tuple[tuple[int, ...], float, str]] = {}
     for file_path in profile_dir.iterdir():
         if not file_path.is_file() or "-" not in file_path.name:
             continue
         local_id = file_path.name.split("-", 1)[0]
         mtime = file_path.stat().st_mtime
+        rank = _profile_file_rank(file_path, local_id)
         relative_path = f"Media/Profile/{file_path.name}"
         current = indexed.get(local_id)
-        if current is None or mtime > current[0]:
-            indexed[local_id] = (mtime, relative_path)
-    return {local_id: value[1] for local_id, value in indexed.items()}
+        if current is None or (rank, mtime, relative_path) > current:
+            indexed[local_id] = (rank, mtime, relative_path)
+    return {local_id: value[2] for local_id, value in indexed.items()}
 
 
 def find_profile_media_for_jid(
@@ -217,6 +247,7 @@ def find_profile_media_for_jid(
     backup_dir: Path,
     contacts_db_path: Path | None = None,
 ) -> str | None:
+    """Find the best profile media path for a contact JID."""
     index = _profile_index_for_backup(str(backup_dir.resolve()))
     for candidate_id in _candidate_profile_ids(contact_jid, contacts_db_path):
         match = index.get(candidate_id)

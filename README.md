@@ -12,11 +12,14 @@ A local, read-only Flask app that opens a copied WhatsApp backup and lets you br
 - Infinite scrolling in the chat list
 - Message history loading with older-message pagination
 - WhatsApp-style chat layout and bubbles
+- Group bubble sender names resolved from contacts when possible
+- Color-coded sender labels in group chats
 - Message links are clickable
 - Image thumbnails in chat that open in a larger viewer modal
 - Group/contact info modal
 - Group members view
 - Contact/group avatars with DB + media-path fallback lookup
+- System/security membership event rows are filtered from message history
 - Light/dark theme follows system preference
 - Sidebar resize (desktop)
 
@@ -53,6 +56,8 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000).
 make tidy
 make lint
 ```
+
+Code files include short docstrings for key helpers, repository functions, and Flask routes.
 
 ## Notes
 

@@ -8,6 +8,7 @@ from .config import AppConfig
 
 
 def get_db() -> sqlite3.Connection:
+    """Return a cached read-only SQLite connection for the current request."""
     connection = g.get("db_connection")
     if connection is None:
         app_config: AppConfig = current_app.config["APP_CONFIG"]
@@ -20,6 +21,7 @@ def get_db() -> sqlite3.Connection:
 
 
 def close_db(_exception: BaseException | None = None) -> None:
+    """Close and clear the request-scoped SQLite connection."""
     connection = g.pop("db_connection", None)
     if connection is not None:
         connection.close()

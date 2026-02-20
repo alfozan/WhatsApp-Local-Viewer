@@ -19,6 +19,7 @@
     chatOffset: (initialState.chats || []).length,
     chatPageSize: 200,
     infoCache: {},
+    messageRequestToken: 0,
   };
 
   const SIDEBAR_WIDTH_KEY = "whatsapp_viewer_sidebar_width";
@@ -27,8 +28,8 @@
   const searchInput = document.getElementById("chat-search");
   const chatListNode = document.getElementById("chat-list");
   const chatTitleNode = document.getElementById("chat-title");
-  const chatSubtitleNode = document.getElementById("chat-subtitle");
   const chatHeaderAvatarNode = document.getElementById("chat-header-avatar");
+  const chatBackButton = document.getElementById("chat-back-button");
   const chatContactButton = document.getElementById("chat-contact-button");
   const messagesNode = document.getElementById("messages");
   const chatPanel = document.querySelector(".chat-panel");
@@ -37,12 +38,14 @@
   const infoModal = document.getElementById("info-modal");
   const infoCloseButton = document.getElementById("info-close-button");
   const infoTitle = document.getElementById("info-title");
-  const infoJid = document.getElementById("info-jid");
+  const infoTagline = document.getElementById("info-tagline");
+  const infoNumber = document.getElementById("info-number");
   const infoType = document.getElementById("info-type");
   const infoUnread = document.getElementById("info-unread");
   const infoArchived = document.getElementById("info-archived");
   const infoMuted = document.getElementById("info-muted");
   const infoAvatar = document.getElementById("info-avatar");
+  const infoMain = infoModal.querySelector(".info-main");
   const groupInfoNav = document.getElementById("group-info-nav");
   const infoViewInfo = document.getElementById("info-view-info");
   const infoViewMembers = document.getElementById("info-view-members");
@@ -84,6 +87,18 @@
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
+  const openMobileChatPanel = () => {
+    if (window.innerWidth <= 980 && chatPanel) {
+      chatPanel.classList.add("is-open");
+    }
+  };
+
+  const closeMobileChatPanel = () => {
+    if (chatPanel) {
+      chatPanel.classList.remove("is-open");
+    }
+  };
+
   const formatDate = (value) => {
     if (!value) {
       return "";
@@ -109,7 +124,13 @@
     if (Number.isNaN(date.getTime())) {
       return "";
     }
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return date.toLocaleString([], {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
   };
 
   const initialsFromName = (name) => {
@@ -135,6 +156,15 @@
     return `hsl(${hue} 55% 42%)`;
   };
 
+  const senderColorFromKey = (key) => {
+    let hash = 0;
+    for (let i = 0; i < key.length; i += 1) {
+      hash = key.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const hue = Math.abs(hash % 360);
+    return `hsl(${hue} 72% 66%)`;
+  };
+
   const avatarMarkup = (chat, sizeClass) => {
     const label = chat.chat_name || chat.contact_jid || "Unknown";
     if (chat.avatar && chat.avatar.available && chat.avatar.kind === "image") {
@@ -153,6 +183,39 @@
     const initials = initialsFromName(label);
     const color = hashColor(label);
     return `<span class="avatar ${sizeClass}" style="background:${escapeHtml(color)}">${escapeHtml(initials)}</span>`;
+  };
+
+  const memberPhoneLabel = (member) => {
+    const explicitPhone = String(member.phone || "").trim();
+    if (explicitPhone) {
+      return explicitPhone;
+    }
+    const jid = String(member.jid || "").trim();
+    if (!jid) {
+      return "";
+    }
+    const normalizedJid = jid.toLowerCase();
+    if (normalizedJid.endsWith("@lid")) {
+      return "";
+    }
+    if (
+      normalizedJid.includes("@") &&
+      !(
+        normalizedJid.endsWith("@s.whatsapp.net") ||
+        normalizedJid.endsWith("@c.us")
+      )
+    ) {
+      return "";
+    }
+    if (!normalizedJid.includes("@")) {
+      return "";
+    }
+    const localPart = jid.includes("@") ? jid.split("@", 1)[0] : jid;
+    const digits = localPart.replace(/\D/g, "");
+    if (digits.length < 8) {
+      return "";
+    }
+    return `+${digits}`;
   };
 
   const renderAvatarNode = (targetNode, chat, fallbackLabel) => {
@@ -275,10 +338,50 @@
     )}</a></div>`;
   };
 
+  const renderVCard = (vcard) => {
+    if (!vcard) {
+      return "";
+    }
+    const name = escapeHtml(vcard.name || "Contact");
+    const title = vcard.title ? `<div class="vcard-subtitle">${escapeHtml(vcard.title)}</div>` : "";
+    const organization = vcard.organization ? `<div class="vcard-subtitle">${escapeHtml(vcard.organization)}</div>` : "";
+    const numbers = (vcard.numbers || [])
+      .map((value) => {
+        const normalizedHref = String(value).replace(/[^\d+]/g, "");
+        return `<a class="vcard-number" href="tel:${escapeHtml(normalizedHref)}">${escapeHtml(value)}</a>`;
+      })
+      .join("");
+    const emails = (vcard.emails || [])
+      .map((value) => `<a class="vcard-email" href="mailto:${escapeHtml(value)}">${escapeHtml(value)}</a>`)
+      .join("");
+    return `
+      <div class="vcard-message">
+        <div class="vcard-label">Contact card</div>
+        <div class="vcard-name">${name}</div>
+        ${title}
+        ${organization}
+        ${numbers}
+        ${emails}
+      </div>
+    `;
+  };
+
+  const placeholderForMessage = (message) => {
+    if (message.text || message.media || message.vcard) {
+      return "";
+    }
+    if (message.message_type === 59) {
+      return '<div class="message-placeholder is-deleted">This message was deleted.</div>';
+    }
+    if (message.message_type === 14) {
+      return '<div class="message-placeholder">Contact card or unsupported message.</div>';
+    }
+    return '<div class="message-placeholder">Unsupported message.</div>';
+  };
+
   const renderMessages = () => {
     const chat = selectedChat();
     chatTitleNode.textContent = chat ? chat.chat_name : "Select a chat";
-    chatSubtitleNode.textContent = chat ? chat.contact_jid : "";
     if (chat && chatHeaderAvatarNode) {
       renderAvatarNode(chatHeaderAvatarNode, chat, chat.chat_name);
     } else if (chatHeaderAvatarNode) {
@@ -296,14 +399,23 @@
       .map((message) => {
         const directionClass = message.is_from_me ? "outgoing" : "incoming";
         const sender = message.sender_name || (chat ? chat.chat_name : "Unknown");
+        const senderKey = String(message.sender_key || sender || "");
+        const senderStyle =
+          chat && chat.is_group && !message.is_from_me && senderKey
+            ? ` style="color:${escapeHtml(senderColorFromKey(senderKey))}"`
+            : "";
         const text = message.text ? `<div class="message-text">${linkifyText(message.text)}</div>` : "";
         const media = renderMedia(message.media);
+        const vcard = renderVCard(message.vcard);
+        const placeholder = placeholderForMessage(message);
 
         return `
           <article class="message ${directionClass}">
-            <div class="sender">${escapeHtml(sender)}</div>
+            <div class="sender"${senderStyle}>${escapeHtml(sender)}</div>
             ${text}
             ${media}
+            ${vcard}
+            ${placeholder}
             <div class="message-meta">${escapeHtml(formatDate(message.message_date))}</div>
           </article>
         `;
@@ -344,6 +456,7 @@
     const infoSelected = viewName === "info";
     infoViewInfo.classList.toggle("hidden", !infoSelected);
     infoViewMembers.classList.toggle("hidden", infoSelected);
+    infoMain?.classList.toggle("is-members-view", !infoSelected);
     groupInfoNav.querySelectorAll(".info-nav-btn").forEach((button) => {
       button.classList.toggle("is-active", button.dataset.infoView === viewName);
     });
@@ -387,13 +500,13 @@
     setTabCounts();
     syncTabUI();
     renderChats();
-    renderMessages();
     updateUrl();
     state.loadingChats = false;
   };
 
   const fetchMessages = async ({ replaceCurrent, preservePosition }) => {
-    if (!state.selectedChatId) {
+    const selectedChatId = state.selectedChatId;
+    if (!selectedChatId) {
       state.messages = [];
       state.nextBefore = null;
       renderMessages();
@@ -402,6 +515,9 @@
     if (!replaceCurrent && (!state.nextBefore || state.loadingOlder)) {
       return;
     }
+
+    const requestToken = state.messageRequestToken + 1;
+    state.messageRequestToken = requestToken;
 
     const previousHeight = messagesNode.scrollHeight;
     const previousTop = messagesNode.scrollTop;
@@ -414,37 +530,46 @@
       params.set("before", state.nextBefore);
     }
 
-    const response = await fetch(`/api/chats/${state.selectedChatId}/messages?${params.toString()}`);
-    if (!response.ok) {
-      state.loadingOlder = false;
-      return;
-    }
+    try {
+      const response = await fetch(`/api/chats/${selectedChatId}/messages?${params.toString()}`);
+      if (!response.ok) {
+        return;
+      }
 
-    const payload = await response.json();
-    if (replaceCurrent) {
-      state.messages = payload.messages || [];
-    } else {
-      state.messages = [...state.messages, ...(payload.messages || [])];
-    }
-    state.nextBefore = payload.next_before || null;
-    renderMessages();
-    renderChats();
-    updateUrl();
+      const payload = await response.json();
+      if (requestToken !== state.messageRequestToken || selectedChatId !== state.selectedChatId) {
+        return;
+      }
 
-    if (replaceCurrent) {
-      scrollMessagesToBottom({ watchMedia: true });
-    } else if (preservePosition) {
-      const newHeight = messagesNode.scrollHeight;
-      messagesNode.scrollTop = newHeight - previousHeight + previousTop;
-    }
+      if (replaceCurrent) {
+        state.messages = payload.messages || [];
+      } else {
+        state.messages = [...state.messages, ...(payload.messages || [])];
+      }
+      state.nextBefore = payload.next_before || null;
+      renderMessages();
+      renderChats();
+      updateUrl();
 
-    state.loadingOlder = false;
-    if (window.innerWidth <= 980 && chatPanel) {
-      chatPanel.classList.add("is-open");
+      if (replaceCurrent) {
+        scrollMessagesToBottom({ watchMedia: true });
+      } else if (preservePosition) {
+        const newHeight = messagesNode.scrollHeight;
+        messagesNode.scrollTop = newHeight - previousHeight + previousTop;
+      }
+
+      openMobileChatPanel();
+    } finally {
+      if (!replaceCurrent) {
+        state.loadingOlder = false;
+      }
     }
   };
 
   const closeInfoModal = () => {
+    if (document.activeElement instanceof HTMLElement && infoModal.contains(document.activeElement)) {
+      chatContactButton?.focus();
+    }
     infoModal.classList.add("hidden");
     infoModal.setAttribute("aria-hidden", "true");
   };
@@ -455,9 +580,13 @@
     imageViewerCaption.textContent = imageName || "";
     imageViewerModal.classList.remove("hidden");
     imageViewerModal.setAttribute("aria-hidden", "false");
+    imageViewerCloseButton.focus();
   };
 
   const closeImageViewer = () => {
+    if (document.activeElement instanceof HTMLElement && imageViewerModal.contains(document.activeElement)) {
+      chatContactButton?.focus({ preventScroll: true });
+    }
     imageViewerModal.classList.add("hidden");
     imageViewerModal.setAttribute("aria-hidden", "true");
     imageViewerImage.src = "";
@@ -465,11 +594,16 @@
 
   const renderInfoModal = (info) => {
     infoTitle.textContent = info.chat_name || "Chat";
-    infoJid.textContent = info.contact_jid || "";
+    infoTagline.textContent = info.is_group ? "Group chat" : "Direct chat";
+    const numberText = info.is_group ? "" : info.contact_number || "";
+    infoNumber.textContent = numberText;
+    infoNumber.classList.toggle("hidden", !numberText);
     infoType.textContent = info.is_group ? "Group" : "Direct";
     infoUnread.textContent = String(info.unread_count || 0);
     infoArchived.textContent = info.is_archived ? "Yes" : "No";
     infoMuted.textContent = info.muted_until ? formatDate(info.muted_until) : "Not muted";
+    const infoModalContent = infoModal.querySelector(".info-modal-content");
+    infoModalContent?.classList.toggle("is-direct", !info.is_group);
 
     const titleForAvatar = info.chat_name || info.contact_jid || "Chat";
     renderAvatarNode(infoAvatar, info, titleForAvatar);
@@ -492,13 +626,14 @@
     groupMembers.innerHTML = (info.group.members || [])
       .map((member) => {
         const admin = member.is_admin ? "Admin" : "";
+        const phone = memberPhoneLabel(member);
         return `
           <li class="group-member-row">
             <div class="group-member-main">
               ${memberAvatarMarkup(member, "avatar-sm")}
               <div>
                 <div class="group-member-name">${escapeHtml(member.name || "Unknown")}</div>
-                <div class="member-jid">${escapeHtml(member.jid || "")}</div>
+                ${phone ? `<div class="member-phone">${escapeHtml(phone)}</div>` : ""}
               </div>
             </div>
             <div class="group-member-right">
@@ -527,6 +662,7 @@
     renderInfoModal(state.infoCache[cacheKey]);
     infoModal.classList.remove("hidden");
     infoModal.setAttribute("aria-hidden", "false");
+    infoCloseButton.focus();
   };
 
   const setupResizer = () => {
@@ -579,6 +715,7 @@
     state.selectedChatId = null;
     state.messages = [];
     state.nextBefore = null;
+    closeMobileChatPanel();
     await fetchChats({ reset: true });
   });
 
@@ -588,7 +725,11 @@
       return;
     }
     const chatId = Number.parseInt(target.dataset.chatId || "", 10);
-    if (Number.isNaN(chatId) || chatId === state.selectedChatId) {
+    if (Number.isNaN(chatId)) {
+      return;
+    }
+    if (chatId === state.selectedChatId) {
+      openMobileChatPanel();
       return;
     }
     state.selectedChatId = chatId;
@@ -626,6 +767,7 @@
   });
 
   chatContactButton.addEventListener("click", openInfoModal);
+  chatBackButton?.addEventListener("click", closeMobileChatPanel);
   groupInfoNav.addEventListener("click", (event) => {
     const target = event.target.closest(".info-nav-btn");
     if (!target) {
@@ -675,6 +817,7 @@
   renderMessages();
   if (state.selectedChatId) {
     scrollMessagesToBottom({ watchMedia: true });
+    openMobileChatPanel();
   }
   updateUrl();
 })();
