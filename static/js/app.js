@@ -76,10 +76,16 @@
 
     const mentionMap = new Map(
       (mentions || [])
-        .map((mention) => [String(mention.token || ""), String(mention.label || "").trim()])
+        .map((mention) => [
+          String(mention.token || ""),
+          {
+            label: String(mention.label || "").trim(),
+            jid: String(mention.jid || "").trim(),
+          },
+        ])
         .filter(([token]) => token)
     );
-    const tokenPattern = /(https?:\/\/[^\s<]+|www\.[^\s<]+|@[0-9]{6,20})/gi;
+    const tokenPattern = /(https?:\/\/[^\s<]+|www\.[^\s<]+|@[\p{L}\p{N}_]{2,32})/giu;
 
     let cursor = 0;
     let output = "";
@@ -88,9 +94,16 @@
       const tokenIndex = match.index ?? 0;
       output += escapeHtml(source.slice(cursor, tokenIndex));
 
-      if (/^@[0-9]{6,20}$/i.test(token)) {
-        const displayLabel = mentionMap.get(token) || token.slice(1);
-        output += `<span class="message-mention">@${escapeHtml(displayLabel)}</span>`;
+      if (/^@[\p{L}\p{N}_]{2,32}$/iu.test(token)) {
+        const mention = mentionMap.get(token);
+        const displayLabel = mention?.label || token.slice(1);
+        if (mention?.jid) {
+          output += `<button type="button" class="mention-link message-mention" data-sender-jid="${escapeHtml(
+            mention.jid
+          )}">@${escapeHtml(displayLabel)}</button>`;
+        } else {
+          output += `<span class="message-mention">@${escapeHtml(displayLabel)}</span>`;
+        }
       } else {
         let urlToken = token;
         let trailing = "";
@@ -211,6 +224,16 @@
     const initials = initialsFromName(label);
     const color = hashColor(label);
     return `<span class="avatar ${sizeClass}" style="background:${escapeHtml(color)}">${escapeHtml(initials)}</span>`;
+  };
+
+  const senderAvatarMarkup = (message, senderLabel) => {
+    const avatar = message.sender_avatar;
+    if (avatar && avatar.available && avatar.kind === "image") {
+      return `<span class="avatar avatar-xs"><img src="${escapeHtml(avatar.url)}" alt="${escapeHtml(senderLabel)}"></span>`;
+    }
+    const initials = initialsFromName(senderLabel);
+    const color = hashColor(senderLabel);
+    return `<span class="avatar avatar-xs" style="background:${escapeHtml(color)}">${escapeHtml(initials)}</span>`;
   };
 
   const memberPhoneLabel = (member) => {
@@ -417,14 +440,26 @@
       return "";
     }
     const senderName = escapeHtml(replyTo.sender_name || "Unknown");
+    const senderJid = String(replyTo.sender_jid || "").trim();
+    const senderNameMarkup =
+      senderJid && !replyTo.is_from_me
+        ? `<button type="button" class="reply-sender sender-link" data-sender-jid="${escapeHtml(senderJid)}">${senderName}</button>`
+        : `<div class="reply-sender">${senderName}</div>`;
     const replyText = replyTo.text
       ? formatMessageText(replyTo.text, replyTo.mentions || [])
       : '<span class="reply-text-muted">Message</span>';
+    const sourceUrl = String(replyTo.source_url || "").trim();
+    const sourceUrlMarkup = sourceUrl
+      ? `<a class="reply-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+          sourceUrl
+        )}</a>`
+      : "";
     const sideClass = replyTo.is_from_me ? "is-from-me" : "";
     return `
       <div class="reply-preview ${sideClass}">
-        <div class="reply-sender">${senderName}</div>
+        ${senderNameMarkup}
         <div class="reply-text">${replyText}</div>
+        ${sourceUrlMarkup}
       </div>
     `;
   };
@@ -478,6 +513,14 @@
               sender
             )}</button>`
           : `<div class="sender"${senderStyle}>${escapeHtml(sender)}</div>`;
+        const showSenderAvatar = Boolean(chat && chat.is_group && !message.is_from_me);
+        const senderAvatarMarkupHtml = showSenderAvatar
+          ? canOpenDirect
+            ? `<button type="button" class="message-sender-avatar is-clickable" data-sender-jid="${escapeHtml(
+                senderJid
+              )}" aria-label="${escapeHtml(`Open chat with ${sender}`)}">${senderAvatarMarkup(message, sender)}</button>`
+            : `<span class="message-sender-avatar">${senderAvatarMarkup(message, sender)}</span>`
+          : "";
         const text = message.text
           ? `<div class="message-text">${formatMessageText(message.text, message.mentions || [])}</div>`
           : "";
@@ -489,17 +532,20 @@
         const placeholder = placeholderForMessage(message);
 
         return `
-          <article class="message ${directionClass}">
-            ${senderMarkup}
-            ${reply}
-            ${text}
-            ${media}
-            ${vcard}
-            ${callEvent}
-            ${pollEvent}
-            ${placeholder}
-            <div class="message-meta">${escapeHtml(formatDate(message.message_date))}</div>
-          </article>
+          <div class="message-row ${directionClass} ${showSenderAvatar ? "has-avatar" : ""}">
+            ${senderAvatarMarkupHtml}
+            <article class="message ${directionClass}">
+              ${senderMarkup}
+              ${reply}
+              ${text}
+              ${media}
+              ${vcard}
+              ${callEvent}
+              ${pollEvent}
+              ${placeholder}
+              <div class="message-meta">${escapeHtml(formatDate(message.message_date))}</div>
+            </article>
+          </div>
         `;
       })
       .join("");
@@ -861,7 +907,7 @@
   });
 
   messagesNode.addEventListener("click", async (event) => {
-    const senderLink = event.target.closest(".sender-link");
+    const senderLink = event.target.closest(".sender-link, .mention-link, .message-sender-avatar.is-clickable");
     if (senderLink) {
       const senderJid = senderLink.dataset.senderJid || "";
       await openDirectChatForSender(senderJid);

@@ -474,6 +474,7 @@ MESSAGE_QUERY = """
         m.ZFROMJID AS from_jid,
         mi.ZMEDIALOCALPATH AS media_path,
         mi.ZFILESIZE AS media_file_size,
+        mi.ZMETADATA AS media_metadata,
         mi.ZVCARDNAME AS vcard_name,
         mi.ZVCARDSTRING AS vcard_value,
         gm.ZCONTACTNAME AS group_contact_name,
@@ -556,6 +557,7 @@ MESSAGE_QUERY_WITH_CURSOR = """
         m.ZFROMJID AS from_jid,
         mi.ZMEDIALOCALPATH AS media_path,
         mi.ZFILESIZE AS media_file_size,
+        mi.ZMETADATA AS media_metadata,
         mi.ZVCARDNAME AS vcard_name,
         mi.ZVCARDSTRING AS vcard_value,
         gm.ZCONTACTNAME AS group_contact_name,
@@ -1125,6 +1127,7 @@ def get_messages(
             parent_media_path=str(row["parent_media_path"]) if row["parent_media_path"] else None,
             parent_vcard_name=str(row["parent_vcard_name"]) if row["parent_vcard_name"] else None,
             parent_vcard_value=str(row["parent_vcard_value"]) if row["parent_vcard_value"] else None,
+            media_metadata=bytes(row["media_metadata"]) if row["media_metadata"] is not None else None,
         )
         for row in visible_rows
     ]

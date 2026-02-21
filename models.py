@@ -84,3 +84,4 @@ class MessageItem:
     parent_media_path: str | None
     parent_vcard_name: str | None
     parent_vcard_value: str | None
+    media_metadata: bytes | None

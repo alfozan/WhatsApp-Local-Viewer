@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit, urlunsplit
 
 from flask import Blueprint, Flask, abort, current_app, jsonify, redirect, render_template, request, send_file, url_for
 
@@ -18,9 +20,32 @@ from media import (
 )
 from models import ChatSummary, MessageItem
 from repository import VALID_TABS, find_direct_chat_id, get_chat_by_id, get_chat_info, get_messages, list_chats
+from utils import APPLE_EPOCH_OFFSET
 
 viewer = Blueprint("viewer", __name__)
 MENTION_PATTERN = re.compile(r"(?<!\w)@([0-9]{6,20})\b")
+URL_PATTERN = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+
+REPLY_METADATA_FALLBACK_QUERY = """
+    SELECT
+        m.Z_PK AS message_id,
+        m.ZMESSAGEDATE AS message_date,
+        m.ZISFROMME AS is_from_me,
+        m.ZMESSAGETYPE AS message_type,
+        m.ZMESSAGESTATUS AS message_status,
+        m.ZTEXT AS text,
+        m.ZFROMJID AS from_jid,
+        gm.ZMEMBERJID AS group_member_jid,
+        gm.ZCONTACTNAME AS group_contact_name,
+        gm.ZFIRSTNAME AS group_first_name
+    FROM ZWAMESSAGE m
+    LEFT JOIN ZWAGROUPMEMBER gm ON gm.Z_PK = m.ZGROUPMEMBER
+    WHERE m.ZCHATSESSION = ?
+      AND (m.ZMESSAGEDATE < ? OR (m.ZMESSAGEDATE = ? AND m.Z_PK < ?))
+      AND COALESCE(m.ZTEXT, '') <> ''
+    ORDER BY m.ZMESSAGEDATE DESC, m.Z_PK DESC
+    LIMIT 120
+"""
 
 
 def _get_app_config() -> AppConfig:
@@ -151,6 +176,57 @@ def _identifier_lookup_candidates(identifier: str) -> list[str]:
         add_candidate(f"{digits}@lid")
 
     return candidates
+
+
+@lru_cache(maxsize=8)
+def _lid_phone_number_index(lid_db_path_value: str) -> dict[str, tuple[str, ...]]:
+    """Build LID-local-part -> phone-number mapping from `LID.sqlite`."""
+    lid_db_path = Path(lid_db_path_value)
+    if not lid_db_path.exists():
+        return {}
+
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(f"file:{lid_db_path}?mode=ro", uri=True, timeout=5)
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT COALESCE(ZLID, '') AS lid_value, COALESCE(ZPHONENUMBER, '') AS phone_value
+            FROM ZWAPHONENUMBERLIDPAIR
+            WHERE COALESCE(ZLID, '') <> '' AND COALESCE(ZPHONENUMBER, '') <> ''
+            """
+        ).fetchall()
+    except sqlite3.DatabaseError:
+        return {}
+    finally:
+        if connection is not None:
+            connection.close()
+
+    index: dict[str, set[str]] = {}
+    for row in rows:
+        lid_local = _normalize_local_identifier(_jid_local_part(str(row["lid_value"] or "")))
+        phone_digits = _digits_only(str(row["phone_value"] or ""))
+        if not lid_local or len(phone_digits) < 8:
+            continue
+        index.setdefault(lid_local, set()).add(phone_digits)
+
+    return {key: tuple(sorted(values)) for key, values in index.items() if values}
+
+
+def _lid_numbers_for_identifier(identifier: str) -> list[str]:
+    """Resolve phone-number candidates for a LID-like identifier."""
+    normalized_identifier = _normalize_contact_identifier(identifier)
+    lid_local = _normalize_local_identifier(_jid_local_part(normalized_identifier))
+    if not lid_local:
+        return []
+
+    app_config = _get_app_config()
+    lid_db_path = app_config.backup_dir / "LID.sqlite"
+    if not lid_db_path.exists():
+        return []
+
+    index = _lid_phone_number_index(str(lid_db_path.resolve()))
+    return list(index.get(lid_local, ()))
 
 
 def _member_label_from_jid(jid: str) -> str:
@@ -417,9 +493,20 @@ def _lookup_member_contact(
 ) -> dict[str, str]:
     """Resolve member identity, contact name, and phone from Contacts DB."""
     normalized_jid = _normalize_contact_identifier(member_jid.strip().lower())
+    member_lookup_candidates = _identifier_lookup_candidates(member_jid)
+    for number_digits in _lid_numbers_for_identifier(member_jid):
+        for variant in (
+            number_digits,
+            f"{number_digits}@s.whatsapp.net",
+            f"{number_digits}@c.us",
+            f"{number_digits}@lid",
+        ):
+            if variant not in member_lookup_candidates:
+                member_lookup_candidates.append(variant)
+
     row: sqlite3.Row | None = None
     checked_phone_digits: set[str] = set()
-    for candidate in _identifier_lookup_candidates(member_jid):
+    for candidate in member_lookup_candidates:
         local_part = _jid_local_part(candidate)
         row = connection.execute(
             CONTACT_MEMBER_LOOKUP_QUERY,
@@ -496,6 +583,16 @@ def _lookup_contact_details(
         return {"name": "", "number": "", "id": ""}
 
     lookup_candidates = _identifier_lookup_candidates(normalized_identifier)
+    for number_digits in _lid_numbers_for_identifier(normalized_identifier):
+        for variant in (
+            number_digits,
+            f"{number_digits}@s.whatsapp.net",
+            f"{number_digits}@c.us",
+            f"{number_digits}@lid",
+        ):
+            if variant not in lookup_candidates:
+                lookup_candidates.append(variant)
+
     cached_payload = _cached_contact_lookup(lookup_cache, normalized_identifier, lookup_candidates)
     if cached_payload is not LOOKUP_CACHE_MISS:
         if isinstance(cached_payload, dict):
@@ -749,6 +846,11 @@ def _build_direct_chat_candidates(
 
     for candidate in _identifier_lookup_candidates(normalized_identifier):
         add_candidate(candidate)
+    for number_digits in _lid_numbers_for_identifier(normalized_identifier):
+        add_candidate(number_digits)
+        add_candidate(f"{number_digits}@s.whatsapp.net")
+        add_candidate(f"{number_digits}@c.us")
+        add_candidate(f"{number_digits}@lid")
 
     lookup_details = _lookup_contact_details(normalized_identifier, lookup_cache)
     resolved_id = _normalize_contact_identifier(str(lookup_details.get("id") or "").strip().lower())
@@ -762,6 +864,121 @@ def _build_direct_chat_candidates(
 
     normalized_local_part = _jid_local_part(resolved_id) if resolved_id else local_part
     return candidates, normalized_local_part
+
+
+def _metadata_blob_to_text(media_metadata: bytes | None) -> str:
+    """Decode message metadata blob into searchable text."""
+    if media_metadata is None:
+        return ""
+    if not media_metadata:
+        return ""
+    decoded = media_metadata.decode("utf-8", errors="ignore")
+    return "".join(char if char.isprintable() else " " for char in decoded)
+
+
+def _extract_urls(text: str) -> list[str]:
+    """Extract URLs from plain text."""
+    if not text:
+        return []
+    return [match.group(0) for match in URL_PATTERN.finditer(text)]
+
+
+def _canonicalize_url(raw_url: str) -> str:
+    """Normalize URLs for fuzzy matching between reply metadata and message text."""
+    normalized = raw_url.strip()
+    if not normalized:
+        return ""
+    try:
+        parsed = urlsplit(normalized)
+    except ValueError:
+        return normalized
+    scheme = parsed.scheme.lower()
+    netloc = parsed.netloc.lower()
+    path = (parsed.path.rstrip("/") or parsed.path).lower()
+    query = parsed.query.replace("&amp;", "&").lower()
+    return urlunsplit((scheme, netloc, path, query, "")).strip()
+
+
+def _resolve_fallback_sender_name(
+    row: sqlite3.Row,
+    lookup_cache: dict[str, dict[str, str] | None],
+) -> tuple[str, str | None]:
+    """Resolve sender name/JID from a fallback reply candidate row."""
+    if bool(row["is_from_me"] or 0):
+        return "You", None
+
+    sender_jid = str(row["group_member_jid"] or "").strip() or str(row["from_jid"] or "").strip() or None
+    if sender_jid:
+        sender_details = _lookup_contact_details(sender_jid, lookup_cache)
+        resolved_sender_name = str(sender_details.get("name") or "").strip()
+        if resolved_sender_name:
+            return resolved_sender_name, _normalize_contact_identifier(str(sender_details.get("id") or sender_jid))
+
+    group_name = str(row["group_contact_name"] or "").strip() or str(row["group_first_name"] or "").strip()
+    if group_name:
+        return group_name, sender_jid
+
+    if sender_jid:
+        return _member_label_from_jid(sender_jid), sender_jid
+    return "Unknown", None
+
+
+def _infer_reply_from_media_metadata(
+    message: MessageItem,
+    lookup_cache: dict[str, dict[str, str] | None],
+) -> dict[str, Any] | None:
+    """Infer quote-preview metadata when `ZPARENTMESSAGE` is absent in backup rows."""
+    if message.parent_message_id is not None:
+        return None
+    if not message.media_metadata or not message.message_date:
+        return None
+
+    coredata_message_date = message.message_date.timestamp() - APPLE_EPOCH_OFFSET
+    metadata_urls = {_canonicalize_url(url) for url in _extract_urls(_metadata_blob_to_text(message.media_metadata))}
+    metadata_urls.discard("")
+    if not metadata_urls:
+        return None
+
+    message_urls = {_canonicalize_url(url) for url in _extract_urls(message.text)}
+    candidate_urls = metadata_urls - message_urls
+    if not candidate_urls:
+        return None
+
+    fallback_rows = (
+        get_db()
+        .execute(
+            REPLY_METADATA_FALLBACK_QUERY,
+            [message.chat_id, coredata_message_date, coredata_message_date, message.message_id],
+        )
+        .fetchall()
+    )
+    for row in fallback_rows:
+        candidate_text = str(row["text"] or "").strip()
+        if not candidate_text:
+            continue
+        candidate_text_url_lookup = {
+            _canonicalize_url(raw_url): raw_url for raw_url in _extract_urls(candidate_text) if _canonicalize_url(raw_url)
+        }
+        if not candidate_text_url_lookup:
+            continue
+        matched_urls = candidate_urls & set(candidate_text_url_lookup.keys())
+        if not matched_urls:
+            continue
+
+        sender_name, sender_jid = _resolve_fallback_sender_name(row, lookup_cache)
+        preview_text = candidate_text
+        matched_canonical_url = next(iter(matched_urls))
+        return {
+            "message_id": int(row["message_id"]),
+            "sender_name": sender_name,
+            "sender_jid": sender_jid,
+            "is_from_me": bool(row["is_from_me"] or 0),
+            "text": preview_text,
+            "mentions": _extract_message_mentions(preview_text, lookup_cache),
+            "source_url": candidate_text_url_lookup[matched_canonical_url],
+            "is_inferred": True,
+        }
+    return None
 
 
 def _reply_media_label(media_path: str) -> str:
@@ -810,22 +1027,30 @@ def _serialize_reply(
 ) -> dict[str, Any] | None:
     """Serialize replied-to message metadata for quote-preview rendering."""
     if not message.parent_message_id:
-        return None
+        return _infer_reply_from_media_metadata(message, lookup_cache)
 
     sender_name = (message.parent_sender_name or "").strip() or "Unknown"
+    sender_jid = message.parent_sender_jid
     if not message.parent_is_from_me and message.parent_sender_jid:
         sender_details = _lookup_contact_details(message.parent_sender_jid, lookup_cache)
         resolved_sender_name = str(sender_details.get("name") or "").strip()
         if resolved_sender_name:
             sender_name = resolved_sender_name
+        resolved_sender_jid = _normalize_contact_identifier(str(sender_details.get("id") or "").strip().lower())
+        if resolved_sender_jid:
+            sender_jid = resolved_sender_jid
 
     preview_text = _reply_preview_text(message)
+    preview_urls = _extract_urls(preview_text)
     return {
         "message_id": message.parent_message_id,
         "sender_name": sender_name,
+        "sender_jid": sender_jid,
         "is_from_me": bool(message.parent_is_from_me),
         "text": preview_text,
         "mentions": _extract_message_mentions(preview_text, lookup_cache),
+        "source_url": preview_urls[0] if preview_urls else None,
+        "is_inferred": False,
     }
 
 
@@ -878,6 +1103,7 @@ def _serialize_chat(chat: ChatSummary) -> dict[str, Any]:
 def _serialize_message(
     message: MessageItem,
     contact_lookup_cache: dict[str, dict[str, str] | None],
+    sender_avatar_cache: dict[str, dict[str, Any] | None],
 ) -> dict[str, Any]:
     """Serialize one message with media, sender, and structured message enrichments."""
     sender_name = message.sender_name
@@ -892,6 +1118,14 @@ def _serialize_message(
             sender_jid = resolved_sender_jid
 
     sender_key = sender_jid or sender_name or "unknown"
+    sender_avatar: dict[str, Any] | None = None
+    if not message.is_from_me and sender_jid:
+        normalized_sender_jid = _normalize_contact_identifier(sender_jid)
+        if normalized_sender_jid in sender_avatar_cache:
+            sender_avatar = sender_avatar_cache[normalized_sender_jid]
+        else:
+            sender_avatar = _resolve_avatar_attachment([], normalized_sender_jid)
+            sender_avatar_cache[normalized_sender_jid] = sender_avatar
 
     app_config = _get_app_config()
     payload: dict[str, Any] = {
@@ -905,6 +1139,7 @@ def _serialize_message(
         "sender_name": sender_name,
         "sender_jid": sender_jid,
         "sender_key": sender_key,
+        "sender_avatar": sender_avatar,
         "media": None,
         "media_hd": None,
         "vcard": _serialize_vcard(message, contact_lookup_cache),
@@ -980,8 +1215,14 @@ def _load_initial_state(tab: str, selected_chat_id: int | None) -> tuple[dict[st
         if resolved_chat_id is not None:
             messages, next_before = get_messages(connection, chat_id=resolved_chat_id, limit=100)
             contact_lookup_cache: dict[str, dict[str, str] | None] = {}
+            sender_avatar_cache: dict[str, dict[str, Any] | None] = {}
             initial_data["messages"] = [
-                _serialize_message(message, contact_lookup_cache=contact_lookup_cache) for message in messages
+                _serialize_message(
+                    message,
+                    contact_lookup_cache=contact_lookup_cache,
+                    sender_avatar_cache=sender_avatar_cache,
+                )
+                for message in messages
             ]
             initial_data["next_before"] = next_before
     except FileNotFoundError as error:
@@ -1049,6 +1290,7 @@ def api_messages(chat_id: int) -> tuple[Any, int] | Any:
         return jsonify({"error": "Invalid pagination cursor."}), 400
 
     contact_lookup_cache: dict[str, dict[str, str] | None] = {}
+    sender_avatar_cache: dict[str, dict[str, Any] | None] = {}
     return jsonify(
         {
             "chat_id": chat_id,
@@ -1057,6 +1299,7 @@ def api_messages(chat_id: int) -> tuple[Any, int] | Any:
                 _serialize_message(
                     message,
                     contact_lookup_cache=contact_lookup_cache,
+                    sender_avatar_cache=sender_avatar_cache,
                 )
                 for message in messages
             ],
