@@ -957,7 +957,10 @@ def _infer_reply_from_media_metadata(
         if not candidate_text:
             continue
         candidate_text_url_lookup = {
-            _canonicalize_url(raw_url): raw_url for raw_url in _extract_urls(candidate_text) if _canonicalize_url(raw_url)
+            canonical_url: raw_url
+            for raw_url in _extract_urls(candidate_text)
+            for canonical_url in [_canonicalize_url(raw_url)]
+            if canonical_url
         }
         if not candidate_text_url_lookup:
             continue

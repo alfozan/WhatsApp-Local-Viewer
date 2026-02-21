@@ -445,14 +445,18 @@
       senderJid && !replyTo.is_from_me
         ? `<button type="button" class="reply-sender sender-link" data-sender-jid="${escapeHtml(senderJid)}">${senderName}</button>`
         : `<div class="reply-sender">${senderName}</div>`;
-    const replyText = replyTo.text
+    const rawReplyText = String(replyTo.text || "").trim();
+    const replyText = rawReplyText
       ? formatMessageText(replyTo.text, replyTo.mentions || [])
       : '<span class="reply-text-muted">Message</span>';
     const sourceUrl = String(replyTo.source_url || "").trim();
+    const hasDistinctSourceUrl = sourceUrl && (!rawReplyText || !rawReplyText.includes(sourceUrl));
     const sourceUrlMarkup = sourceUrl
-      ? `<a class="reply-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
-          sourceUrl
-        )}</a>`
+      ? hasDistinctSourceUrl
+        ? `<a class="reply-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+            sourceUrl
+          )}</a>`
+        : ""
       : "";
     const sideClass = replyTo.is_from_me ? "is-from-me" : "";
     return `
