@@ -625,7 +625,7 @@
     state.counts = payload.counts || state.counts;
 
     if (!state.chats.find((chat) => chat.chat_id === state.selectedChatId)) {
-      state.selectedChatId = state.chats.length ? state.chats[0].chat_id : null;
+      state.selectedChatId = null;
       await fetchMessages({ replaceCurrent: true, preservePosition: false });
     }
 

@@ -1210,9 +1210,9 @@ def _load_initial_state(tab: str, selected_chat_id: int | None) -> tuple[dict[st
         initial_data["counts"] = counts
         initial_data["chats"] = [_serialize_chat(chat) for chat in chats]
 
-        resolved_chat_id = selected_chat_id if selected_chat_id is not None else (chats[0].chat_id if chats else None)
+        resolved_chat_id = selected_chat_id
         if resolved_chat_id is not None and get_chat_by_id(connection, resolved_chat_id) is None:
-            resolved_chat_id = chats[0].chat_id if chats else None
+            resolved_chat_id = None
 
         initial_data["selected_chat_id"] = resolved_chat_id
         if resolved_chat_id is not None:
