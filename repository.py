@@ -4,8 +4,8 @@ import sqlite3
 from dataclasses import replace
 from typing import Any
 
-from .models import ChatSummary, MessageItem
-from .utils import coredata_to_datetime, decode_cursor, encode_cursor
+from models import ChatSummary, MessageItem
+from utils import coredata_to_datetime, decode_cursor, encode_cursor
 
 VALID_TABS = {"all", "groups", "archived"}
 
@@ -473,6 +473,7 @@ MESSAGE_QUERY = """
         m.ZTEXT AS text,
         m.ZFROMJID AS from_jid,
         mi.ZMEDIALOCALPATH AS media_path,
+        mi.ZFILESIZE AS media_file_size,
         mi.ZVCARDNAME AS vcard_name,
         mi.ZVCARDSTRING AS vcard_value,
         gm.ZCONTACTNAME AS group_contact_name,
@@ -554,6 +555,7 @@ MESSAGE_QUERY_WITH_CURSOR = """
         m.ZTEXT AS text,
         m.ZFROMJID AS from_jid,
         mi.ZMEDIALOCALPATH AS media_path,
+        mi.ZFILESIZE AS media_file_size,
         mi.ZVCARDNAME AS vcard_name,
         mi.ZVCARDSTRING AS vcard_value,
         gm.ZCONTACTNAME AS group_contact_name,
@@ -723,6 +725,28 @@ LATEST_CHAT_PREVIEW_QUERY = """
     LIMIT 1
 """
 
+RECENT_MESSAGES_FOR_UNREAD_QUERY = """
+    SELECT
+        COALESCE(m.ZISFROMME, 0) AS is_from_me,
+        COALESCE(m.ZMESSAGESTATUS, 0) AS message_status,
+        COALESCE(m.ZMESSAGETYPE, 0) AS message_type,
+        COALESCE(m.ZFROMJID, '') AS from_jid,
+        COALESCE(m.ZTEXT, '') AS text,
+        COALESCE(mi.ZMEDIALOCALPATH, '') AS media_path,
+        COALESCE(mi.ZFILESIZE, 0) AS file_size
+    FROM ZWAMESSAGE m
+    LEFT JOIN ZWAMEDIAITEM mi ON mi.Z_PK = m.ZMEDIAITEM
+    WHERE m.ZCHATSESSION = ?
+      AND COALESCE(m.ZMESSAGETYPE, 0) NOT IN (6, 10)
+    ORDER BY m.ZMESSAGEDATE DESC, m.Z_PK DESC
+    LIMIT ?
+"""
+
+UNREAD_MESSAGE_STATUSES = {6}
+UNREAD_SCAN_LIMIT = 120
+SMALL_IMAGE_FILE_SIZE_BYTES = 150_000
+LARGE_IMAGE_FILE_SIZE_BYTES = 500_000
+
 
 def _latest_chat_previews(connection: sqlite3.Connection, chat_ids: list[int]) -> dict[int, tuple[float, str]]:
     """Return latest displayable `(message_date, preview_text)` per chat."""
@@ -762,6 +786,147 @@ def _apply_latest_chat_previews(
             )
         )
     return updated
+
+
+def _collapse_unread_image_duplicates(rows: list[sqlite3.Row]) -> int:
+    """Collapse likely duplicated image rows into logical unread image count."""
+    if not rows:
+        return 0
+
+    if not _is_single_sender_image_batch(rows):
+        return len(rows)
+
+    small_images, large_images = _image_size_buckets(rows)
+    if small_images == 0 or large_images == 0:
+        return len(rows)
+    if small_images + large_images != len(rows):
+        return len(rows)
+
+    return max(small_images, large_images)
+
+
+def _is_single_sender_image_batch(rows: list[sqlite3.Row]) -> bool:
+    """Return whether unread rows are plain images from one sender."""
+    senders = {str(row["from_jid"] or "").strip() for row in rows}
+    if len(senders) != 1:
+        return False
+    for row in rows:
+        if int(row["message_type"] or 0) != 1:
+            return False
+        if not str(row["media_path"] or "").strip():
+            return False
+        if str(row["text"] or "").strip():
+            return False
+    return True
+
+
+def _image_size_buckets(rows: list[sqlite3.Row]) -> tuple[int, int]:
+    """Count image rows in small/large file-size buckets."""
+    small_images = 0
+    large_images = 0
+    for row in rows:
+        file_size = int(row["file_size"] or 0)
+        if 0 < file_size < SMALL_IMAGE_FILE_SIZE_BYTES:
+            small_images += 1
+            continue
+        if file_size >= LARGE_IMAGE_FILE_SIZE_BYTES:
+            large_images += 1
+    return small_images, large_images
+
+
+def _derived_unread_count(connection: sqlite3.Connection, chat_id: int) -> int:
+    """Derive unread count from the newest contiguous incoming unread message run."""
+    rows = connection.execute(RECENT_MESSAGES_FOR_UNREAD_QUERY, [chat_id, UNREAD_SCAN_LIMIT]).fetchall()
+    if not rows:
+        return 0
+
+    unread_rows: list[sqlite3.Row] = []
+    for row in rows:
+        if bool(row["is_from_me"] or 0):
+            break
+        if int(row["message_status"] or 0) not in UNREAD_MESSAGE_STATUSES:
+            break
+        unread_rows.append(row)
+
+    if not unread_rows:
+        return 0
+    return _collapse_unread_image_duplicates(unread_rows)
+
+
+def _apply_derived_unread_counts(
+    connection: sqlite3.Connection,
+    chats: list[ChatSummary],
+) -> list[ChatSummary]:
+    """Replace raw chat unread counters with derived unread counters."""
+    updated: list[ChatSummary] = []
+    for chat in chats:
+        unread_count = _derived_unread_count(connection, chat.chat_id)
+        updated.append(replace(chat, unread_count=unread_count))
+    return updated
+
+
+def _is_media_variant_candidate(message: MessageItem) -> bool:
+    """Return whether a message is a plain image candidate for variant collapsing."""
+    return (
+        message.message_type == 1
+        and not message.text.strip()
+        and message.media_path is not None
+        and (message.media_file_size or 0) > 0
+        and message.parent_message_id is None
+    )
+
+
+def _collapse_image_variant_messages(messages: list[MessageItem]) -> list[MessageItem]:
+    """Merge adjacent preview/HD image variants into a single display message."""
+    if len(messages) < 2:
+        return messages
+
+    collapsed: list[MessageItem] = []
+    i = 0
+    while i < len(messages):
+        current = messages[i]
+        if i + 1 >= len(messages):
+            collapsed.append(current)
+            break
+
+        nxt = messages[i + 1]
+        if not (_is_media_variant_candidate(current) and _is_media_variant_candidate(nxt)):
+            collapsed.append(current)
+            i += 1
+            continue
+
+        same_sender = (current.sender_jid or "") == (nxt.sender_jid or "")
+        same_direction = current.is_from_me == nxt.is_from_me
+        if not (same_sender and same_direction and current.message_date and nxt.message_date):
+            collapsed.append(current)
+            i += 1
+            continue
+
+        seconds_delta = abs((current.message_date - nxt.message_date).total_seconds())
+        if seconds_delta > 2:
+            collapsed.append(current)
+            i += 1
+            continue
+
+        current_size = int(current.media_file_size or 0)
+        next_size = int(nxt.media_file_size or 0)
+        sizes = sorted((current_size, next_size))
+        if not (sizes[0] < SMALL_IMAGE_FILE_SIZE_BYTES and sizes[1] >= LARGE_IMAGE_FILE_SIZE_BYTES):
+            collapsed.append(current)
+            i += 1
+            continue
+
+        preview_message = current if current_size <= next_size else nxt
+        hd_message = current if current_size > next_size else nxt
+        merged = replace(
+            current,
+            media_path=preview_message.media_path,
+            media_hd_path=hd_message.media_path,
+            media_file_size=preview_message.media_file_size,
+        )
+        collapsed.append(merged)
+        i += 2
+    return collapsed
 
 
 def _validate_tab(tab: str) -> None:
@@ -831,6 +996,7 @@ def list_chats(
         sql = TAB_CHAT_QUERIES[tab]
         rows = connection.execute(sql, [safe_limit, safe_offset]).fetchall()
     chats = [_to_chat_summary(row) for row in rows]
+    chats = _apply_derived_unread_counts(connection, chats)
     chats = _apply_latest_chat_previews(connection, chats)
     return chats, get_tab_counts(connection)
 
@@ -840,7 +1006,9 @@ def get_chat_by_id(connection: sqlite3.Connection, chat_id: int) -> ChatSummary 
     row = connection.execute(CHAT_BY_ID_QUERY, [chat_id]).fetchone()
     if row is None:
         return None
-    return _to_chat_summary(row)
+    chat = _to_chat_summary(row)
+    unread_count = _derived_unread_count(connection, chat.chat_id)
+    return replace(chat, unread_count=unread_count)
 
 
 def find_direct_chat_id(
@@ -937,6 +1105,8 @@ def get_messages(
             sender_name=_resolve_sender_name(row),
             sender_jid=(str(row["group_member_jid"] or "").strip() or str(row["from_jid"] or "").strip() or None),
             media_path=str(row["media_path"]) if row["media_path"] else None,
+            media_hd_path=None,
+            media_file_size=int(row["media_file_size"]) if row["media_file_size"] is not None else None,
             vcard_name=str(row["vcard_name"]) if row["vcard_name"] else None,
             vcard_value=str(row["vcard_value"]) if row["vcard_value"] else None,
             parent_message_id=int(row["parent_message_id"]) if row["parent_message_id"] else None,
@@ -948,11 +1118,7 @@ def get_messages(
             parent_text=str(row["parent_text"] or "") if row["parent_message_id"] else None,
             parent_sender_name=_resolve_sender_name(row, prefix="parent_") if row["parent_message_id"] else None,
             parent_sender_jid=(
-                (
-                    str(row["parent_group_member_jid"] or "").strip()
-                    or str(row["parent_from_jid"] or "").strip()
-                    or None
-                )
+                (str(row["parent_group_member_jid"] or "").strip() or str(row["parent_from_jid"] or "").strip() or None)
                 if row["parent_message_id"]
                 else None
             ),
@@ -962,6 +1128,7 @@ def get_messages(
         )
         for row in visible_rows
     ]
+    messages = _collapse_image_variant_messages(messages)
 
     next_before: str | None = None
     if has_more and visible_rows:

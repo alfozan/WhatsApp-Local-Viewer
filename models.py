@@ -70,6 +70,8 @@ class MessageItem:
     sender_name: str
     sender_jid: str | None
     media_path: str | None
+    media_hd_path: str | None
+    media_file_size: int | None
     vcard_name: str | None
     vcard_value: str | None
     parent_message_id: int | None

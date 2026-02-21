@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from whatsapp_backup_viewer.app import create_app
+from app import create_app
 
 
 def _parse_args() -> argparse.Namespace:

@@ -4,7 +4,7 @@ import sqlite3
 
 from flask import current_app, g
 
-from .config import AppConfig
+from config import AppConfig
 
 
 def get_db() -> sqlite3.Connection:

@@ -7,17 +7,17 @@ from typing import Any, cast
 
 from flask import Blueprint, Flask, abort, current_app, jsonify, redirect, render_template, request, send_file, url_for
 
-from .config import AppConfig
-from .db import close_db, get_db
-from .media import (
+from config import AppConfig
+from db import close_db, get_db
+from media import (
     build_media_attachment,
     decode_media_token,
     encode_media_token,
     find_profile_media_for_jid,
     resolve_media_path,
 )
-from .models import ChatSummary, MessageItem
-from .repository import VALID_TABS, find_direct_chat_id, get_chat_by_id, get_chat_info, get_messages, list_chats
+from models import ChatSummary, MessageItem
+from repository import VALID_TABS, find_direct_chat_id, get_chat_by_id, get_chat_info, get_messages, list_chats
 
 viewer = Blueprint("viewer", __name__)
 MENTION_PATTERN = re.compile(r"(?<!\w)@([0-9]{6,20})\b")
@@ -507,9 +507,7 @@ def _extract_message_mentions(
             resolved_lookup = {"name": "", "number": "", "id": ""}
 
         mention_label = (
-            str(resolved_lookup.get("name") or "").strip()
-            or _format_phone_number(token_value)
-            or token_value
+            str(resolved_lookup.get("name") or "").strip() or _format_phone_number(token_value) or token_value
         )
         mentions.append(
             {
@@ -702,6 +700,7 @@ def _serialize_message(
         "sender_jid": message.sender_jid,
         "sender_key": sender_key,
         "media": None,
+        "media_hd": None,
         "vcard": _serialize_vcard(message, contact_lookup_cache),
         "call_event": _serialize_call_event(message),
         "poll_event": _serialize_poll_event(message),
@@ -711,6 +710,11 @@ def _serialize_message(
     if message.media_path:
         media_url = url_for("viewer.media_file", encoded_media_path=encode_media_token(message.media_path))
         payload["media"] = build_media_attachment(message.media_path, media_url, app_config.backup_dir).to_dict()
+    if message.media_hd_path:
+        media_hd_url = url_for("viewer.media_file", encoded_media_path=encode_media_token(message.media_hd_path))
+        payload["media_hd"] = build_media_attachment(
+            message.media_hd_path, media_hd_url, app_config.backup_dir
+        ).to_dict()
     return payload
 
 
@@ -909,7 +913,7 @@ def media_file(encoded_media_path: str) -> Any:
 
 def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
     """Create and configure the Flask application."""
-    project_root = Path(__file__).resolve().parent.parent
+    project_root = Path(__file__).resolve().parent
     app = Flask(
         __name__,
         template_folder=str(project_root / "templates"),

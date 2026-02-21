@@ -7,7 +7,7 @@ import sqlite3
 from functools import lru_cache
 from pathlib import Path
 
-from .models import MediaAttachment
+from models import MediaAttachment
 
 
 def encode_media_token(raw_path: str) -> str:

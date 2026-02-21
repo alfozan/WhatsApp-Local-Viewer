@@ -335,7 +335,7 @@
     chatListNode.innerHTML = `${chatRows}${loadingRow}`;
   };
 
-  const renderMedia = (media) => {
+  const renderMedia = (media, mediaHd) => {
     if (!media) {
       return "";
     }
@@ -345,10 +345,12 @@
       )} (missing)</a></div>`;
     }
     if (media.kind === "image") {
+      const viewerUrl = mediaHd && mediaHd.available ? mediaHd.url : media.url;
+      const viewerName = mediaHd && mediaHd.available ? mediaHd.file_name : media.file_name;
       return `
         <div class="media">
-          <button type="button" class="media-image-trigger" data-image-url="${escapeHtml(media.url)}" data-image-name="${escapeHtml(
-            media.file_name
+          <button type="button" class="media-image-trigger" data-image-url="${escapeHtml(viewerUrl)}" data-image-name="${escapeHtml(
+            viewerName
           )}">
             <img class="message-image-thumb" src="${escapeHtml(media.url)}" alt="${escapeHtml(media.file_name)}">
           </button>
@@ -480,7 +482,7 @@
           ? `<div class="message-text">${formatMessageText(message.text, message.mentions || [])}</div>`
           : "";
         const reply = renderReplyPreview(message.reply_to);
-        const media = renderMedia(message.media);
+        const media = renderMedia(message.media, message.media_hd);
         const vcard = renderVCard(message.vcard);
         const callEvent = renderCallEvent(message.call_event);
         const pollEvent = renderPollEvent(message.poll_event);
