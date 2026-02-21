@@ -1,6 +1,6 @@
 # WhatsApp Backup Viewer
 
-A local, read-only Flask app that opens a copied WhatsApp backup and lets you browse chats in a WhatsApp Web-like interface.
+A local, read-only Flask app that opens a WhatsApp backup and lets you browse chats in a WhatsApp Web-like interface.
 
 ## What it supports
 
@@ -25,7 +25,7 @@ A local, read-only Flask app that opens a copied WhatsApp backup and lets you br
 
 ## Data source
 
-Set the backup directory with `--backup-dir` (or `make run BACKUP_DIR=...`).
+Set the backup directory with `--whatsapp-backup-dir` (or `make run WHATSAPP_BACKUP_DIR=...`).
 
 Expected files:
 
@@ -45,7 +45,7 @@ This app only performs read operations against the backup:
 
 ```bash
 make setup
-make run BACKUP_DIR="/path/to/WhatsApp"
+make run WHATSAPP_BACKUP_DIR="/path/to/WhatsApp"
 ```
 
 Open [http://127.0.0.1:5000](http://127.0.0.1:5000).

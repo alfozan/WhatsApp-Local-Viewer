@@ -34,13 +34,13 @@ clean:
 	rm -rf .ruff_cache
 
 run:
-	@BACKUP_PATH="$(BACKUP_DIR)"; \
+	@BACKUP_PATH="$(WHATSAPP_BACKUP_DIR)"; \
 	if [ -z "$$BACKUP_PATH" ]; then \
 		echo ">>> Missing backup path."; \
-		echo ">>> Use: make run BACKUP_DIR=/path/to/WhatsApp"; \
+		echo ">>> Use: make run WHATSAPP_BACKUP_DIR=/path/to/WhatsApp"; \
 		exit 1; \
 	fi; \
-	uv run python main.py --backup-dir "$$BACKUP_PATH"
+	uv run python main.py --whatsapp-backup-dir "$$BACKUP_PATH"
 
 lint:
 	@echo ">>> Linting with Ruff..."

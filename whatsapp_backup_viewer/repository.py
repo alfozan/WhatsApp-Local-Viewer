@@ -439,6 +439,29 @@ CHAT_BY_ID_QUERY = """
     LIMIT 1
 """
 
+DIRECT_CHAT_BY_IDENTIFIERS_QUERY = """
+    SELECT
+        c.Z_PK AS chat_id
+    FROM ZWACHATSESSION c
+    WHERE COALESCE(c.ZCONTACTJID, '') <> ''
+      AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@g.us'
+      AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
+      AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
+      AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@newsletter'
+      AND (
+          c.ZCONTACTJID IN ({placeholders})
+          OR (
+              CASE
+                  WHEN instr(c.ZCONTACTJID, '@') > 0
+                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
+                  ELSE c.ZCONTACTJID
+              END
+          ) = ?
+      )
+    ORDER BY COALESCE(c.ZLASTMESSAGEDATE, 0) DESC, c.Z_PK DESC
+    LIMIT 1
+"""
+
 MESSAGE_QUERY = """
     SELECT
         m.Z_PK AS message_id,
@@ -818,6 +841,29 @@ def get_chat_by_id(connection: sqlite3.Connection, chat_id: int) -> ChatSummary 
     if row is None:
         return None
     return _to_chat_summary(row)
+
+
+def find_direct_chat_id(
+    connection: sqlite3.Connection,
+    identifiers: list[str],
+    local_part: str,
+) -> int | None:
+    """Find direct-chat id by possible JID identifiers and local part."""
+    normalized_identifiers = [value.strip().lower() for value in identifiers if value and value.strip()]
+    if not normalized_identifiers and not local_part:
+        return None
+
+    if normalized_identifiers:
+        placeholders = ", ".join("?" for _ in normalized_identifiers)
+        query = DIRECT_CHAT_BY_IDENTIFIERS_QUERY.format(placeholders=placeholders)
+        row = connection.execute(query, [*normalized_identifiers, local_part]).fetchone()
+    else:
+        query = DIRECT_CHAT_BY_IDENTIFIERS_QUERY.format(placeholders="''")
+        row = connection.execute(query, [local_part]).fetchone()
+
+    if row is None:
+        return None
+    return int(row["chat_id"])
 
 
 def _resolve_sender_name(row: sqlite3.Row, prefix: str = "") -> str:

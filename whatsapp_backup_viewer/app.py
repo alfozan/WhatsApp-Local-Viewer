@@ -17,7 +17,7 @@ from .media import (
     resolve_media_path,
 )
 from .models import ChatSummary, MessageItem
-from .repository import VALID_TABS, get_chat_by_id, get_chat_info, get_messages, list_chats
+from .repository import VALID_TABS, find_direct_chat_id, get_chat_by_id, get_chat_info, get_messages, list_chats
 
 viewer = Blueprint("viewer", __name__)
 MENTION_PATTERN = re.compile(r"(?<!\w)@([0-9]{6,20})\b")
@@ -522,6 +522,49 @@ def _extract_message_mentions(
     return mentions
 
 
+def _build_direct_chat_candidates(
+    identifier: str,
+    lookup_cache: dict[str, dict[str, str] | None],
+) -> tuple[list[str], str]:
+    """Build candidate direct-chat JIDs from a sender identifier."""
+    normalized_identifier = identifier.strip().lower()
+    if not normalized_identifier:
+        return [], ""
+
+    local_part = _jid_local_part(normalized_identifier)
+    digits = _digits_only(local_part)
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(value: str) -> None:
+        candidate = value.strip().lower()
+        if not candidate or candidate in seen:
+            return
+        seen.add(candidate)
+        candidates.append(candidate)
+
+    add_candidate(normalized_identifier)
+    if local_part:
+        add_candidate(local_part)
+    if digits:
+        add_candidate(f"{digits}@s.whatsapp.net")
+        add_candidate(f"{digits}@c.us")
+        add_candidate(f"{digits}@lid")
+
+    lookup_details = _lookup_contact_details(normalized_identifier, lookup_cache)
+    resolved_id = str(lookup_details.get("id") or "").strip().lower()
+    resolved_number = _digits_only(str(lookup_details.get("number") or ""))
+    if resolved_id:
+        add_candidate(resolved_id)
+    if resolved_number:
+        add_candidate(f"{resolved_number}@s.whatsapp.net")
+        add_candidate(f"{resolved_number}@c.us")
+        add_candidate(f"{resolved_number}@lid")
+
+    normalized_local_part = _jid_local_part(resolved_id) if resolved_id else local_part
+    return candidates, normalized_local_part
+
+
 def _reply_media_label(media_path: str) -> str:
     """Return short UI label for replied media messages."""
     app_config = _get_app_config()
@@ -656,6 +699,7 @@ def _serialize_message(
         "message_status": message.message_status,
         "text": message.text,
         "sender_name": sender_name,
+        "sender_jid": message.sender_jid,
         "sender_key": sender_key,
         "media": None,
         "vcard": _serialize_vcard(message, contact_lookup_cache),
@@ -823,6 +867,31 @@ def api_chat_info(chat_id: int) -> tuple[Any, int] | Any:
     return jsonify(_serialize_chat_info_payload(info))
 
 
+@viewer.get("/api/direct-chat")
+def api_direct_chat() -> tuple[Any, int] | Any:
+    """Resolve a sender identifier to a direct chat, if available."""
+    identifier = (request.args.get("jid") or "").strip()
+    if not identifier:
+        return jsonify({"error": "Missing jid query parameter."}), 400
+
+    app_config = _get_app_config()
+    app_config.validate()
+
+    connection = get_db()
+    contact_lookup_cache: dict[str, dict[str, str] | None] = {}
+    candidate_ids, local_part = _build_direct_chat_candidates(identifier, contact_lookup_cache)
+    chat_id = find_direct_chat_id(connection, candidate_ids, local_part)
+    if chat_id is None:
+        return jsonify({"error": "Direct chat not found."}), 404
+
+    chat = get_chat_by_id(connection, chat_id)
+    if chat is None:
+        return jsonify({"error": "Direct chat not found."}), 404
+
+    target_tab = "archived" if chat.is_archived else "all"
+    return jsonify({"chat_id": chat.chat_id, "tab": target_tab, "chat": _serialize_chat(chat)})
+
+
 @viewer.get("/media/<path:encoded_media_path>")
 def media_file(encoded_media_path: str) -> Any:
     """Serve a media file from backup using an encoded path token."""
@@ -848,7 +917,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
     )
     app.config.from_mapping(config_overrides or {})
 
-    backup_dir_override = app.config.get("BACKUP_DIR")
+    backup_dir_override = app.config.get("WHATSAPP_BACKUP_DIR")
     app.config["APP_CONFIG"] = AppConfig.from_path(str(backup_dir_override) if backup_dir_override else None)
     app.config.setdefault("JSON_AS_ASCII", False)
     app.teardown_appcontext(close_db)

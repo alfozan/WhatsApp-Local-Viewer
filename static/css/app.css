@@ -368,6 +368,22 @@ body.is-resizing .sidebar-resizer {
   font-weight: 500;
 }
 
+.sender-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0 0 4px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sender-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .message-text {
   white-space: pre-wrap;
   word-wrap: break-word;

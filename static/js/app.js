@@ -464,10 +464,18 @@
         const directionClass = message.is_from_me ? "outgoing" : "incoming";
         const sender = message.sender_name || (chat ? chat.chat_name : "Unknown");
         const senderKey = String(message.sender_key || sender || "");
+        const senderJid = String(message.sender_jid || "");
+        const canOpenDirect =
+          Boolean(chat && chat.is_group && !message.is_from_me && senderJid && !senderJid.toLowerCase().endsWith("@g.us"));
         const senderStyle =
           chat && chat.is_group && !message.is_from_me && senderKey
             ? ` style="color:${escapeHtml(senderColorFromKey(senderKey))}"`
             : "";
+        const senderMarkup = canOpenDirect
+          ? `<button type="button" class="sender sender-link"${senderStyle} data-sender-jid="${escapeHtml(senderJid)}">${escapeHtml(
+              sender
+            )}</button>`
+          : `<div class="sender"${senderStyle}>${escapeHtml(sender)}</div>`;
         const text = message.text
           ? `<div class="message-text">${formatMessageText(message.text, message.mentions || [])}</div>`
           : "";
@@ -480,7 +488,7 @@
 
         return `
           <article class="message ${directionClass}">
-            <div class="sender"${senderStyle}>${escapeHtml(sender)}</div>
+            ${senderMarkup}
             ${reply}
             ${text}
             ${media}
@@ -636,6 +644,41 @@
         state.loadingOlder = false;
       }
     }
+  };
+
+  const openDirectChatForSender = async (senderJid) => {
+    const normalizedJid = String(senderJid || "").trim();
+    if (!normalizedJid) {
+      return;
+    }
+
+    const response = await fetch(`/api/direct-chat?jid=${encodeURIComponent(normalizedJid)}`);
+    if (!response.ok) {
+      return;
+    }
+    const payload = await response.json();
+    const targetChatId = Number.parseInt(String(payload.chat_id || ""), 10);
+    if (Number.isNaN(targetChatId)) {
+      return;
+    }
+
+    const targetTab = payload.tab || "all";
+    if (targetTab !== state.tab) {
+      state.tab = targetTab;
+      state.selectedChatId = null;
+      state.messages = [];
+      state.nextBefore = null;
+      await fetchChats({ reset: true });
+    }
+
+    if (payload.chat && !state.chats.find((chatItem) => chatItem.chat_id === targetChatId)) {
+      state.chats = [payload.chat, ...state.chats];
+      state.chatOffset = state.chats.length;
+    }
+
+    state.selectedChatId = targetChatId;
+    renderChats();
+    await fetchMessages({ replaceCurrent: true, preservePosition: false });
   };
 
   const closeInfoModal = () => {
@@ -815,7 +858,14 @@
     await fetchMessages({ replaceCurrent: false, preservePosition: true });
   });
 
-  messagesNode.addEventListener("click", (event) => {
+  messagesNode.addEventListener("click", async (event) => {
+    const senderLink = event.target.closest(".sender-link");
+    if (senderLink) {
+      const senderJid = senderLink.dataset.senderJid || "";
+      await openDirectChatForSender(senderJid);
+      return;
+    }
+
     const target = event.target.closest(".media-image-trigger");
     if (!target) {
       return;
