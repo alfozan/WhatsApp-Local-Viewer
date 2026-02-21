@@ -82,6 +82,77 @@ def _jid_local_part(jid: str) -> str:
     return normalized
 
 
+def _normalize_local_identifier(raw_value: str) -> str:
+    """Normalize local-part identifiers used by WhatsApp contact rows."""
+    value = raw_value.strip().lower()
+    if not value:
+        return ""
+    if value.startswith("a_"):
+        value = value.removeprefix("a_")
+    if value.startswith("om_"):
+        remainder = value.removeprefix("om_")
+        value = remainder.split("_", 1)[0] if "_" in remainder else remainder
+    if ":" in value:
+        head, _tail = value.split(":", 1)
+        if _digits_only(head):
+            value = head
+    if value.startswith("+"):
+        digits = _digits_only(value)
+        if len(digits) >= 8:
+            value = digits
+    return value
+
+
+def _normalize_contact_identifier(raw_value: str) -> str:
+    """Normalize raw JID/identifier value for contact lookups."""
+    value = raw_value.strip().lower()
+    if not value:
+        return ""
+    if "@" in value:
+        local_part, domain = value.split("@", 1)
+        normalized_local_part = _normalize_local_identifier(local_part)
+        if normalized_local_part:
+            return f"{normalized_local_part}@{domain}"
+        return value
+    return _normalize_local_identifier(value)
+
+
+def _identifier_lookup_candidates(identifier: str) -> list[str]:
+    """Build normalized identifier variants to improve contact matching."""
+    base = identifier.strip().lower()
+    normalized_base = _normalize_contact_identifier(base)
+    is_group_identifier = normalized_base.endswith(("@g.us", "@newsletter"))
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(value: str) -> None:
+        candidate = value.strip().lower()
+        if not candidate or candidate in seen:
+            return
+        seen.add(candidate)
+        candidates.append(candidate)
+
+    add_candidate(base)
+    add_candidate(normalized_base)
+
+    for current in list(candidates):
+        local_part = _normalize_local_identifier(_jid_local_part(current))
+        if local_part:
+            add_candidate(local_part)
+        if is_group_identifier:
+            continue
+        digits = _digits_only(local_part)
+        if len(digits) < 8:
+            continue
+        add_candidate(digits)
+        add_candidate(f"{digits}@s.whatsapp.net")
+        add_candidate(f"{digits}@c.us")
+        add_candidate(f"{digits}@lid")
+
+    return candidates
+
+
 def _member_label_from_jid(jid: str) -> str:
     """Build fallback member label from JID."""
     local = _jid_local_part(jid)
@@ -201,18 +272,169 @@ CONTACT_DETAILS_LOOKUP_QUERY = """
     LIMIT 1
 """
 
+CONTACT_DETAILS_PHONE_LOOKUP_QUERY = """
+    SELECT
+        COALESCE(NULLIF(ZFULLNAME, ''), NULLIF(ZGIVENNAME, ''), '') AS resolved_name,
+        COALESCE(NULLIF(ZLOCALIZEDPHONENUMBER, ''), NULLIF(ZPHONENUMBER, ''), '') AS resolved_phone,
+        COALESCE(NULLIF(ZWHATSAPPID, ''), NULLIF(ZLID, ''), '') AS resolved_id
+    FROM ZWAADDRESSBOOKCONTACT
+    WHERE
+        replace(
+            replace(
+                replace(
+                    replace(replace(replace(COALESCE(ZLOCALIZEDPHONENUMBER, ''), '+', ''), ' ', ''), '-', ''),
+                    '(',
+                    ''
+                ),
+                ')',
+                ''
+            ),
+            '.',
+            ''
+        ) = ?
+        OR replace(
+            replace(
+                replace(replace(replace(replace(COALESCE(ZPHONENUMBER, ''), '+', ''), ' ', ''), '-', ''), '(', ''),
+                ')',
+                ''
+            ),
+            '.',
+            ''
+        ) = ?
+    ORDER BY Z_PK DESC
+    LIMIT 1
+"""
+
+CONTACT_MEMBER_PHONE_LOOKUP_QUERY = """
+    SELECT
+        COALESCE(NULLIF(ZFULLNAME, ''), NULLIF(ZGIVENNAME, ''), '') AS resolved_name,
+        COALESCE(NULLIF(ZLOCALIZEDPHONENUMBER, ''), NULLIF(ZPHONENUMBER, ''), '') AS resolved_phone,
+        COALESCE(ZLID, '') AS lid,
+        COALESCE(ZWHATSAPPID, '') AS whatsapp_id
+    FROM ZWAADDRESSBOOKCONTACT
+    WHERE
+        replace(
+            replace(
+                replace(
+                    replace(replace(replace(COALESCE(ZLOCALIZEDPHONENUMBER, ''), '+', ''), ' ', ''), '-', ''),
+                    '(',
+                    ''
+                ),
+                ')',
+                ''
+            ),
+            '.',
+            ''
+        ) = ?
+        OR replace(
+            replace(
+                replace(replace(replace(replace(COALESCE(ZPHONENUMBER, ''), '+', ''), ' ', ''), '-', ''), '(', ''),
+                ')',
+                ''
+            ),
+            '.',
+            ''
+        ) = ?
+    ORDER BY Z_PK DESC
+    LIMIT 1
+"""
+
+LOOKUP_CACHE_MISS = object()
+
+
+def _lookup_contact_row_for_candidate(
+    connection: sqlite3.Connection,
+    candidate: str,
+    checked_phone_digits: set[str],
+) -> sqlite3.Row | None:
+    """Lookup one contact row for a normalized identifier candidate."""
+    local_part = _jid_local_part(candidate)
+    row = connection.execute(
+        CONTACT_DETAILS_LOOKUP_QUERY,
+        [candidate, candidate, local_part, local_part, candidate, candidate],
+    ).fetchone()
+    if row is not None:
+        return row
+
+    digits = _digits_only(local_part)
+    if len(digits) < 8 or digits in checked_phone_digits:
+        return None
+    checked_phone_digits.add(digits)
+    return connection.execute(CONTACT_DETAILS_PHONE_LOOKUP_QUERY, [digits, digits]).fetchone()
+
+
+def _cache_contact_lookup(
+    lookup_cache: dict[str, dict[str, str] | None],
+    normalized_identifier: str,
+    lookup_candidates: list[str],
+    payload: dict[str, str] | None,
+) -> None:
+    """Cache contact lookup result for all identifier variants."""
+    for candidate in lookup_candidates:
+        lookup_cache[candidate] = payload
+    lookup_cache[normalized_identifier] = payload
+
+
+def _cached_contact_lookup(
+    lookup_cache: dict[str, dict[str, str] | None],
+    normalized_identifier: str,
+    lookup_candidates: list[str],
+) -> dict[str, str] | None | object:
+    """Return cached contact payload for any lookup variant if available."""
+    for candidate in lookup_candidates:
+        if candidate in lookup_cache:
+            return lookup_cache[candidate]
+    if normalized_identifier in lookup_cache:
+        return lookup_cache[normalized_identifier]
+    return LOOKUP_CACHE_MISS
+
+
+def _query_contact_row(
+    contacts_db_path: Path,
+    lookup_candidates: list[str],
+) -> sqlite3.Row | None:
+    """Query contacts database for the first matching identifier candidate."""
+    connection: sqlite3.Connection | None = None
+    checked_phone_digits: set[str] = set()
+    try:
+        connection = sqlite3.connect(f"file:{contacts_db_path}?mode=ro", uri=True, timeout=5)
+        connection.row_factory = sqlite3.Row
+        for candidate in lookup_candidates:
+            row = _lookup_contact_row_for_candidate(connection, candidate, checked_phone_digits)
+            if row is not None:
+                return row
+    except sqlite3.DatabaseError:
+        return None
+    finally:
+        if connection is not None:
+            connection.close()
+    return None
+
 
 def _lookup_member_contact(
     connection: sqlite3.Connection,
     member_jid: str,
 ) -> dict[str, str]:
     """Resolve member identity, contact name, and phone from Contacts DB."""
-    normalized_jid = member_jid.strip().lower()
-    local_part = _jid_local_part(normalized_jid)
-    row = connection.execute(
-        CONTACT_MEMBER_LOOKUP_QUERY,
-        [normalized_jid, normalized_jid, local_part, local_part, normalized_jid, normalized_jid],
-    ).fetchone()
+    normalized_jid = _normalize_contact_identifier(member_jid.strip().lower())
+    row: sqlite3.Row | None = None
+    checked_phone_digits: set[str] = set()
+    for candidate in _identifier_lookup_candidates(member_jid):
+        local_part = _jid_local_part(candidate)
+        row = connection.execute(
+            CONTACT_MEMBER_LOOKUP_QUERY,
+            [candidate, candidate, local_part, local_part, candidate, candidate],
+        ).fetchone()
+        if row is not None:
+            break
+        digits = _digits_only(local_part)
+        if len(digits) < 8 or digits in checked_phone_digits:
+            continue
+        checked_phone_digits.add(digits)
+        row = connection.execute(CONTACT_MEMBER_PHONE_LOOKUP_QUERY, [digits, digits]).fetchone()
+        if row is not None:
+            break
+
     if row is None:
         return {"identity_key": f"jid:{normalized_jid}", "name": "", "number": ""}
 
@@ -269,50 +491,35 @@ def _lookup_contact_details(
     lookup_cache: dict[str, dict[str, str] | None],
 ) -> dict[str, str]:
     """Resolve contact name/number fields for a JID or identifier."""
-    normalized_identifier = identifier.strip().lower()
+    normalized_identifier = _normalize_contact_identifier(identifier.strip().lower())
     if not normalized_identifier:
         return {"name": "", "number": "", "id": ""}
-    if normalized_identifier in lookup_cache:
-        return lookup_cache[normalized_identifier] or {"name": "", "number": "", "id": ""}
+
+    lookup_candidates = _identifier_lookup_candidates(normalized_identifier)
+    cached_payload = _cached_contact_lookup(lookup_cache, normalized_identifier, lookup_candidates)
+    if cached_payload is not LOOKUP_CACHE_MISS:
+        if isinstance(cached_payload, dict):
+            return cast(dict[str, str], cached_payload)
+        return {"name": "", "number": "", "id": ""}
 
     app_config = _get_app_config()
     if not app_config.contacts_db_path.exists():
-        lookup_cache[normalized_identifier] = None
+        _cache_contact_lookup(lookup_cache, normalized_identifier, lookup_candidates, None)
         return {"name": "", "number": "", "id": ""}
 
-    local_part = _jid_local_part(normalized_identifier)
-    connection: sqlite3.Connection | None = None
-    try:
-        connection = sqlite3.connect(f"file:{app_config.contacts_db_path}?mode=ro", uri=True, timeout=5)
-        connection.row_factory = sqlite3.Row
-        row = connection.execute(
-            CONTACT_DETAILS_LOOKUP_QUERY,
-            [
-                normalized_identifier,
-                normalized_identifier,
-                local_part,
-                local_part,
-                normalized_identifier,
-                normalized_identifier,
-            ],
-        ).fetchone()
-    except sqlite3.DatabaseError:
-        lookup_cache[normalized_identifier] = None
-        return {"name": "", "number": "", "id": ""}
-    finally:
-        if connection is not None:
-            connection.close()
-
+    row = _query_contact_row(app_config.contacts_db_path, lookup_candidates)
     if row is None:
-        lookup_cache[normalized_identifier] = None
+        _cache_contact_lookup(lookup_cache, normalized_identifier, lookup_candidates, None)
         return {"name": "", "number": "", "id": ""}
 
     payload = {
         "name": str(row["resolved_name"] or "").strip(),
         "number": _format_phone_number(str(row["resolved_phone"] or "")),
-        "id": str(row["resolved_id"] or "").strip().lower(),
+        "id": _normalize_contact_identifier(str(row["resolved_id"] or "").strip().lower()),
     }
-    lookup_cache[normalized_identifier] = payload
+    if not payload["number"] and payload["id"]:
+        payload["number"] = _number_from_identifier(payload["id"])
+    _cache_contact_lookup(lookup_cache, normalized_identifier, lookup_candidates, payload)
     return payload
 
 
@@ -525,12 +732,11 @@ def _build_direct_chat_candidates(
     lookup_cache: dict[str, dict[str, str] | None],
 ) -> tuple[list[str], str]:
     """Build candidate direct-chat JIDs from a sender identifier."""
-    normalized_identifier = identifier.strip().lower()
+    normalized_identifier = _normalize_contact_identifier(identifier.strip().lower())
     if not normalized_identifier:
         return [], ""
 
-    local_part = _jid_local_part(normalized_identifier)
-    digits = _digits_only(local_part)
+    local_part = _normalize_local_identifier(_jid_local_part(normalized_identifier))
     candidates: list[str] = []
     seen: set[str] = set()
 
@@ -541,16 +747,11 @@ def _build_direct_chat_candidates(
         seen.add(candidate)
         candidates.append(candidate)
 
-    add_candidate(normalized_identifier)
-    if local_part:
-        add_candidate(local_part)
-    if digits:
-        add_candidate(f"{digits}@s.whatsapp.net")
-        add_candidate(f"{digits}@c.us")
-        add_candidate(f"{digits}@lid")
+    for candidate in _identifier_lookup_candidates(normalized_identifier):
+        add_candidate(candidate)
 
     lookup_details = _lookup_contact_details(normalized_identifier, lookup_cache)
-    resolved_id = str(lookup_details.get("id") or "").strip().lower()
+    resolved_id = _normalize_contact_identifier(str(lookup_details.get("id") or "").strip().lower())
     resolved_number = _digits_only(str(lookup_details.get("number") or ""))
     if resolved_id:
         add_candidate(resolved_id)
@@ -680,12 +881,17 @@ def _serialize_message(
 ) -> dict[str, Any]:
     """Serialize one message with media, sender, and structured message enrichments."""
     sender_name = message.sender_name
-    sender_key = message.sender_jid or message.sender_name or "unknown"
+    sender_jid = message.sender_jid
     if not message.is_from_me and message.sender_jid:
         sender_details = _lookup_contact_details(message.sender_jid, contact_lookup_cache)
         resolved_sender_name = str(sender_details.get("name") or "").strip()
         if resolved_sender_name:
             sender_name = resolved_sender_name
+        resolved_sender_jid = _normalize_contact_identifier(str(sender_details.get("id") or "").strip().lower())
+        if resolved_sender_jid:
+            sender_jid = resolved_sender_jid
+
+    sender_key = sender_jid or sender_name or "unknown"
 
     app_config = _get_app_config()
     payload: dict[str, Any] = {
@@ -697,7 +903,7 @@ def _serialize_message(
         "message_status": message.message_status,
         "text": message.text,
         "sender_name": sender_name,
-        "sender_jid": message.sender_jid,
+        "sender_jid": sender_jid,
         "sender_key": sender_key,
         "media": None,
         "media_hd": None,
