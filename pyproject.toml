@@ -1,5 +1,5 @@
 [project]
-name = "whatsapp-backup-viewer"
+name = "whatsapp-local-viewer"
 version = "0.1.0"
 description = "Local read-only Flask app to browse WhatsApp backup chats and media."
 readme = "README.md"
