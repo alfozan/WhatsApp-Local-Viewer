@@ -18,7 +18,7 @@ class AppConfig:
         backup_dir_value = (backup_dir_override or "").strip()
         if not backup_dir_value:
             raise FileNotFoundError(
-                "WhatsApp backup directory is not configured. Pass --whatsapp-backup-dir /path/to/WhatsApp."
+                "WhatsApp directory is not configured. Pass --whatsapp-dir /path/to/WhatsApp."
             )
         backup_dir = Path(backup_dir_value).expanduser()
         return cls(

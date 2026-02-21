@@ -1373,7 +1373,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
     )
     app.config.from_mapping(config_overrides or {})
 
-    backup_dir_override = app.config.get("WHATSAPP_BACKUP_DIR")
+    backup_dir_override = app.config.get("WHATSAPP_DIR")
     app.config["APP_CONFIG"] = AppConfig.from_path(str(backup_dir_override) if backup_dir_override else None)
     app.config.setdefault("JSON_AS_ASCII", False)
     app.teardown_appcontext(close_db)
