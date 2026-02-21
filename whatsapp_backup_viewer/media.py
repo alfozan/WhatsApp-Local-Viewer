@@ -155,6 +155,19 @@ def _local_part(raw_jid: str | None) -> str:
     return value
 
 
+def _normalize_profile_jid(raw_jid: str | None) -> str:
+    """Normalize profile-picture table JIDs into comparable WhatsApp JIDs."""
+    value = (raw_jid or "").strip().lower()
+    if not value:
+        return ""
+    if value.startswith("a_"):
+        return value.removeprefix("a_")
+    if value.startswith("om_"):
+        remainder = value.removeprefix("om_")
+        return remainder.split("_", 1)[0] if "_" in remainder else remainder
+    return value
+
+
 def _profile_file_rank(file_path: Path, local_id: str) -> tuple[int, ...]:
     """Extract sortable numeric suffix parts from a profile filename."""
     prefix = f"{local_id}-"
@@ -206,6 +219,60 @@ def _contact_alias_index(contacts_db_path_value: str) -> dict[str, tuple[str, ..
     return {key: tuple(sorted(values)) for key, values in aliases.items() if values}
 
 
+@lru_cache(maxsize=8)
+def _contact_jid_alias_index(contacts_db_path_value: str) -> dict[str, tuple[str, ...]]:
+    """Build mapping of full JID aliases from the contacts database."""
+    contacts_db_path = Path(contacts_db_path_value)
+    if not contacts_db_path.exists():
+        return {}
+
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(f"file:{contacts_db_path}?mode=ro", uri=True, timeout=5)
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT COALESCE(ZLID, '') AS lid, COALESCE(ZWHATSAPPID, '') AS whatsapp_id
+            FROM ZWAADDRESSBOOKCONTACT
+            WHERE COALESCE(ZLID, '') <> '' OR COALESCE(ZWHATSAPPID, '') <> ''
+            """
+        ).fetchall()
+    except sqlite3.DatabaseError:
+        return {}
+    finally:
+        if connection is not None:
+            connection.close()
+
+    aliases: dict[str, set[str]] = {}
+    for row in rows:
+        pair_jids = {_normalize_profile_jid(str(row["lid"])), _normalize_profile_jid(str(row["whatsapp_id"]))}
+        pair_jids = {jid for jid in pair_jids if "@" in jid}
+        if not pair_jids:
+            continue
+        pair_locals = {_local_part(jid) for jid in pair_jids}
+        for key in {*pair_jids, *pair_locals}:
+            if key:
+                aliases.setdefault(key, set()).update(pair_jids)
+
+    return {key: tuple(sorted(values)) for key, values in aliases.items() if values}
+
+
+def _candidate_profile_jids(contact_jid: str | None, contacts_db_path: Path | None) -> list[str]:
+    """Return ordered candidate full JIDs for profile-picture lookup."""
+    normalized_jid = _normalize_profile_jid(contact_jid)
+    if not normalized_jid:
+        return []
+
+    candidates: list[str] = [normalized_jid]
+    if contacts_db_path:
+        alias_index = _contact_jid_alias_index(str(contacts_db_path.resolve()))
+        for key in (normalized_jid, _local_part(normalized_jid)):
+            for alias_jid in alias_index.get(key, ()):
+                if alias_jid and alias_jid not in candidates:
+                    candidates.append(alias_jid)
+    return candidates
+
+
 def _candidate_profile_ids(contact_jid: str | None, contacts_db_path: Path | None) -> list[str]:
     """Return ordered candidate profile IDs for a contact JID."""
     local_id = _jid_local_part(contact_jid)
@@ -219,6 +286,59 @@ def _candidate_profile_ids(contact_jid: str | None, contacts_db_path: Path | Non
             if alias_id and alias_id not in candidate_ids:
                 candidate_ids.append(alias_id)
     return candidate_ids
+
+
+@lru_cache(maxsize=8)
+def _profile_jid_index_for_backup(backup_dir_value: str) -> dict[str, str]:
+    """Index latest profile path by normalized source JID from ChatStorage."""
+    chat_storage_path = Path(backup_dir_value) / "ChatStorage.sqlite"
+    if not chat_storage_path.exists():
+        return {}
+
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(f"file:{chat_storage_path}?mode=ro", uri=True, timeout=5)
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT Z_PK AS row_id, COALESCE(ZJID, '') AS source_jid, COALESCE(ZPATH, '') AS raw_path
+            FROM ZWAPROFILEPICTUREITEM
+            WHERE COALESCE(ZPATH, '') <> ''
+            """
+        ).fetchall()
+    except sqlite3.DatabaseError:
+        return {}
+    finally:
+        if connection is not None:
+            connection.close()
+
+    indexed: dict[str, tuple[int, str]] = {}
+    for row in rows:
+        source_jid = _normalize_profile_jid(str(row["source_jid"]))
+        normalized_path = normalize_media_path(str(row["raw_path"]))
+        if not source_jid or "@" not in source_jid:
+            continue
+        if not normalized_path.startswith("Media/Profile/"):
+            continue
+        row_id = int(row["row_id"] or 0)
+        current = indexed.get(source_jid)
+        if current is None or row_id > current[0]:
+            indexed[source_jid] = (row_id, normalized_path)
+
+    return {jid: value[1] for jid, value in indexed.items()}
+
+
+@lru_cache(maxsize=8)
+def _group_prefix_ids_for_backup(backup_dir_value: str) -> set[str]:
+    """Return numeric prefixes that belong to group JIDs in profile metadata."""
+    group_prefixes: set[str] = set()
+    for source_jid in _profile_jid_index_for_backup(backup_dir_value):
+        if not source_jid.endswith("@g.us"):
+            continue
+        local = _local_part(source_jid)
+        if "-" in local:
+            group_prefixes.add(local.split("-", 1)[0])
+    return group_prefixes
 
 
 @lru_cache(maxsize=8)
@@ -248,8 +368,24 @@ def find_profile_media_for_jid(
     contacts_db_path: Path | None = None,
 ) -> str | None:
     """Find the best profile media path for a contact JID."""
-    index = _profile_index_for_backup(str(backup_dir.resolve()))
-    for candidate_id in _candidate_profile_ids(contact_jid, contacts_db_path):
+    normalized_jid = _normalize_profile_jid(contact_jid)
+    if not normalized_jid:
+        return None
+
+    backup_key = str(backup_dir.resolve())
+    jid_index = _profile_jid_index_for_backup(backup_key)
+    for candidate_jid in _candidate_profile_jids(normalized_jid, contacts_db_path):
+        match = jid_index.get(candidate_jid)
+        if match:
+            return match
+
+    # Last-resort filesystem fallback can collide with group IDs; avoid that for direct numeric JIDs.
+    group_prefixes = _group_prefix_ids_for_backup(backup_key)
+    is_direct_jid = normalized_jid.endswith(("@s.whatsapp.net", "@c.us"))
+    index = _profile_index_for_backup(backup_key)
+    for candidate_id in _candidate_profile_ids(normalized_jid, contacts_db_path):
+        if is_direct_jid and candidate_id.isdigit() and candidate_id in group_prefixes:
+            continue
         match = index.get(candidate_id)
         if match:
             return match

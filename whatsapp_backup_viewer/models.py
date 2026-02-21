@@ -65,9 +65,20 @@ class MessageItem:
     message_date: datetime | None
     is_from_me: bool
     message_type: int
+    message_status: int
     text: str
     sender_name: str
     sender_jid: str | None
     media_path: str | None
     vcard_name: str | None
     vcard_value: str | None
+    parent_message_id: int | None
+    parent_message_type: int | None
+    parent_message_status: int | None
+    parent_is_from_me: bool | None
+    parent_text: str | None
+    parent_sender_name: str | None
+    parent_sender_jid: str | None
+    parent_media_path: str | None
+    parent_vcard_name: str | None
+    parent_vcard_value: str | None

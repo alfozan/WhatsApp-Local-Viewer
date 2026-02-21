@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from typing import Any
 
 from .models import ChatSummary, MessageItem
@@ -58,19 +59,8 @@ TAB_CHAT_QUERIES = {
                           )
                           AND (
                               p.ZJID = c.ZCONTACTJID
-                              OR p.ZJID LIKE '%' || c.ZCONTACTJID || '%'
-                              OR p.ZPATH LIKE 'Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
-                              OR p.ZPATH LIKE '/Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
+                              OR p.ZJID = 'a_' || c.ZCONTACTJID
+                              OR p.ZJID LIKE 'om_' || c.ZCONTACTJID || '_%'
                           )
                         ORDER BY p.Z_PK DESC
                         LIMIT 1
@@ -126,19 +116,8 @@ TAB_CHAT_QUERIES = {
                           )
                           AND (
                               p.ZJID = c.ZCONTACTJID
-                              OR p.ZJID LIKE '%' || c.ZCONTACTJID || '%'
-                              OR p.ZPATH LIKE 'Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
-                              OR p.ZPATH LIKE '/Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
+                              OR p.ZJID = 'a_' || c.ZCONTACTJID
+                              OR p.ZJID LIKE 'om_' || c.ZCONTACTJID || '_%'
                           )
                         ORDER BY p.Z_PK DESC
                         LIMIT 1
@@ -195,19 +174,8 @@ TAB_CHAT_QUERIES = {
                           )
                           AND (
                               p.ZJID = c.ZCONTACTJID
-                              OR p.ZJID LIKE '%' || c.ZCONTACTJID || '%'
-                              OR p.ZPATH LIKE 'Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
-                              OR p.ZPATH LIKE '/Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
+                              OR p.ZJID = 'a_' || c.ZCONTACTJID
+                              OR p.ZJID LIKE 'om_' || c.ZCONTACTJID || '_%'
                           )
                         ORDER BY p.Z_PK DESC
                         LIMIT 1
@@ -266,19 +234,8 @@ TAB_CHAT_SEARCH_QUERIES = {
                           )
                           AND (
                               p.ZJID = c.ZCONTACTJID
-                              OR p.ZJID LIKE '%' || c.ZCONTACTJID || '%'
-                              OR p.ZPATH LIKE 'Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
-                              OR p.ZPATH LIKE '/Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
+                              OR p.ZJID = 'a_' || c.ZCONTACTJID
+                              OR p.ZJID LIKE 'om_' || c.ZCONTACTJID || '_%'
                           )
                         ORDER BY p.Z_PK DESC
                         LIMIT 1
@@ -336,19 +293,8 @@ TAB_CHAT_SEARCH_QUERIES = {
                           )
                           AND (
                               p.ZJID = c.ZCONTACTJID
-                              OR p.ZJID LIKE '%' || c.ZCONTACTJID || '%'
-                              OR p.ZPATH LIKE 'Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
-                              OR p.ZPATH LIKE '/Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
+                              OR p.ZJID = 'a_' || c.ZCONTACTJID
+                              OR p.ZJID LIKE 'om_' || c.ZCONTACTJID || '_%'
                           )
                         ORDER BY p.Z_PK DESC
                         LIMIT 1
@@ -407,19 +353,8 @@ TAB_CHAT_SEARCH_QUERIES = {
                           )
                           AND (
                               p.ZJID = c.ZCONTACTJID
-                              OR p.ZJID LIKE '%' || c.ZCONTACTJID || '%'
-                              OR p.ZPATH LIKE 'Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
-                              OR p.ZPATH LIKE '/Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
+                              OR p.ZJID = 'a_' || c.ZCONTACTJID
+                              OR p.ZJID LIKE 'om_' || c.ZCONTACTJID || '_%'
                           )
                         ORDER BY p.Z_PK DESC
                         LIMIT 1
@@ -479,19 +414,8 @@ CHAT_BY_ID_QUERY = """
                           )
                           AND (
                               p.ZJID = c.ZCONTACTJID
-                              OR p.ZJID LIKE '%' || c.ZCONTACTJID || '%'
-                              OR p.ZPATH LIKE 'Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
-                              OR p.ZPATH LIKE '/Media/Profile/' ||
-                              CASE
-                                  WHEN instr(c.ZCONTACTJID, '@') > 0
-                                      THEN substr(c.ZCONTACTJID, 1, instr(c.ZCONTACTJID, '@') - 1)
-                                  ELSE c.ZCONTACTJID
-                              END || '-%'
+                              OR p.ZJID = 'a_' || c.ZCONTACTJID
+                              OR p.ZJID LIKE 'om_' || c.ZCONTACTJID || '_%'
                           )
                     ORDER BY p.Z_PK DESC
                     LIMIT 1
@@ -522,6 +446,7 @@ MESSAGE_QUERY = """
         m.ZMESSAGEDATE AS message_date,
         m.ZISFROMME AS is_from_me,
         m.ZMESSAGETYPE AS message_type,
+        m.ZMESSAGESTATUS AS message_status,
         m.ZTEXT AS text,
         m.ZFROMJID AS from_jid,
         mi.ZMEDIALOCALPATH AS media_path,
@@ -546,13 +471,51 @@ MESSAGE_QUERY = """
             ORDER BY p.Z_PK DESC
             LIMIT 1
         ) AS from_push_name,
-        COALESCE(NULLIF(cs.ZPARTNERNAME, ''), NULLIF(cs.ZCONTACTJID, ''), '') AS direct_chat_name
+        COALESCE(NULLIF(cs.ZPARTNERNAME, ''), NULLIF(cs.ZCONTACTJID, ''), '') AS direct_chat_name,
+        pm.Z_PK AS parent_message_id,
+        pm.ZISFROMME AS parent_is_from_me,
+        pm.ZMESSAGETYPE AS parent_message_type,
+        pm.ZMESSAGESTATUS AS parent_message_status,
+        pm.ZTEXT AS parent_text,
+        pm.ZFROMJID AS parent_from_jid,
+        pmi.ZMEDIALOCALPATH AS parent_media_path,
+        pmi.ZVCARDNAME AS parent_vcard_name,
+        pmi.ZVCARDSTRING AS parent_vcard_value,
+        pgm.ZCONTACTNAME AS parent_group_contact_name,
+        pgm.ZFIRSTNAME AS parent_group_first_name,
+        pgm.ZMEMBERJID AS parent_group_member_jid,
+        (
+            SELECT p.ZPUSHNAME
+            FROM ZWAPROFILEPUSHNAME p
+            WHERE p.ZJID = pgm.ZMEMBERJID
+              AND COALESCE(p.ZPUSHNAME, '') <> ''
+            ORDER BY p.Z_PK DESC
+            LIMIT 1
+        ) AS parent_group_push_name,
+        (
+            SELECT p.ZPUSHNAME
+            FROM ZWAPROFILEPUSHNAME p
+            WHERE p.ZJID = pm.ZFROMJID
+              AND COALESCE(p.ZPUSHNAME, '') <> ''
+            ORDER BY p.Z_PK DESC
+            LIMIT 1
+        ) AS parent_from_push_name
     FROM ZWAMESSAGE m
     LEFT JOIN ZWAMEDIAITEM mi ON mi.Z_PK = m.ZMEDIAITEM
     LEFT JOIN ZWAGROUPMEMBER gm ON gm.Z_PK = m.ZGROUPMEMBER
+    LEFT JOIN ZWAMESSAGE pm ON pm.Z_PK = m.ZPARENTMESSAGE
+    LEFT JOIN ZWAMEDIAITEM pmi ON pmi.Z_PK = pm.ZMEDIAITEM
+    LEFT JOIN ZWAGROUPMEMBER pgm ON pgm.Z_PK = pm.ZGROUPMEMBER
     LEFT JOIN ZWACHATSESSION cs ON cs.Z_PK = m.ZCHATSESSION
     WHERE m.ZCHATSESSION = ?
       AND COALESCE(m.ZMESSAGETYPE, 0) <> 6
+      AND (
+          COALESCE(m.ZTEXT, '') <> ''
+          OR COALESCE(mi.ZMEDIALOCALPATH, '') <> ''
+          OR COALESCE(mi.ZVCARDSTRING, '') <> ''
+          OR COALESCE(mi.ZVCARDNAME, '') <> ''
+          OR COALESCE(m.ZMESSAGETYPE, 0) IN (14, 46, 59)
+      )
     ORDER BY m.ZMESSAGEDATE DESC, m.Z_PK DESC
     LIMIT ?
 """
@@ -564,6 +527,7 @@ MESSAGE_QUERY_WITH_CURSOR = """
         m.ZMESSAGEDATE AS message_date,
         m.ZISFROMME AS is_from_me,
         m.ZMESSAGETYPE AS message_type,
+        m.ZMESSAGESTATUS AS message_status,
         m.ZTEXT AS text,
         m.ZFROMJID AS from_jid,
         mi.ZMEDIALOCALPATH AS media_path,
@@ -588,13 +552,51 @@ MESSAGE_QUERY_WITH_CURSOR = """
             ORDER BY p.Z_PK DESC
             LIMIT 1
         ) AS from_push_name,
-        COALESCE(NULLIF(cs.ZPARTNERNAME, ''), NULLIF(cs.ZCONTACTJID, ''), '') AS direct_chat_name
+        COALESCE(NULLIF(cs.ZPARTNERNAME, ''), NULLIF(cs.ZCONTACTJID, ''), '') AS direct_chat_name,
+        pm.Z_PK AS parent_message_id,
+        pm.ZISFROMME AS parent_is_from_me,
+        pm.ZMESSAGETYPE AS parent_message_type,
+        pm.ZMESSAGESTATUS AS parent_message_status,
+        pm.ZTEXT AS parent_text,
+        pm.ZFROMJID AS parent_from_jid,
+        pmi.ZMEDIALOCALPATH AS parent_media_path,
+        pmi.ZVCARDNAME AS parent_vcard_name,
+        pmi.ZVCARDSTRING AS parent_vcard_value,
+        pgm.ZCONTACTNAME AS parent_group_contact_name,
+        pgm.ZFIRSTNAME AS parent_group_first_name,
+        pgm.ZMEMBERJID AS parent_group_member_jid,
+        (
+            SELECT p.ZPUSHNAME
+            FROM ZWAPROFILEPUSHNAME p
+            WHERE p.ZJID = pgm.ZMEMBERJID
+              AND COALESCE(p.ZPUSHNAME, '') <> ''
+            ORDER BY p.Z_PK DESC
+            LIMIT 1
+        ) AS parent_group_push_name,
+        (
+            SELECT p.ZPUSHNAME
+            FROM ZWAPROFILEPUSHNAME p
+            WHERE p.ZJID = pm.ZFROMJID
+              AND COALESCE(p.ZPUSHNAME, '') <> ''
+            ORDER BY p.Z_PK DESC
+            LIMIT 1
+        ) AS parent_from_push_name
     FROM ZWAMESSAGE m
     LEFT JOIN ZWAMEDIAITEM mi ON mi.Z_PK = m.ZMEDIAITEM
     LEFT JOIN ZWAGROUPMEMBER gm ON gm.Z_PK = m.ZGROUPMEMBER
+    LEFT JOIN ZWAMESSAGE pm ON pm.Z_PK = m.ZPARENTMESSAGE
+    LEFT JOIN ZWAMEDIAITEM pmi ON pmi.Z_PK = pm.ZMEDIAITEM
+    LEFT JOIN ZWAGROUPMEMBER pgm ON pgm.Z_PK = pm.ZGROUPMEMBER
     LEFT JOIN ZWACHATSESSION cs ON cs.Z_PK = m.ZCHATSESSION
     WHERE m.ZCHATSESSION = ?
       AND COALESCE(m.ZMESSAGETYPE, 0) <> 6
+      AND (
+          COALESCE(m.ZTEXT, '') <> ''
+          OR COALESCE(mi.ZMEDIALOCALPATH, '') <> ''
+          OR COALESCE(mi.ZVCARDSTRING, '') <> ''
+          OR COALESCE(mi.ZVCARDNAME, '') <> ''
+          OR COALESCE(m.ZMESSAGETYPE, 0) IN (14, 46, 59)
+      )
       AND (m.ZMESSAGEDATE < ? OR (m.ZMESSAGEDATE = ? AND m.Z_PK < ?))
     ORDER BY m.ZMESSAGEDATE DESC, m.Z_PK DESC
     LIMIT ?
@@ -637,19 +639,8 @@ GROUP_MEMBERS_QUERY = """
               )
               AND (
                   pi.ZJID = gm.ZMEMBERJID
-                  OR pi.ZJID LIKE '%' || gm.ZMEMBERJID || '%'
-                  OR pi.ZPATH LIKE 'Media/Profile/' ||
-                  CASE
-                      WHEN instr(gm.ZMEMBERJID, '@') > 0
-                          THEN substr(gm.ZMEMBERJID, 1, instr(gm.ZMEMBERJID, '@') - 1)
-                      ELSE gm.ZMEMBERJID
-                  END || '-%'
-                  OR pi.ZPATH LIKE '/Media/Profile/' ||
-                  CASE
-                      WHEN instr(gm.ZMEMBERJID, '@') > 0
-                          THEN substr(gm.ZMEMBERJID, 1, instr(gm.ZMEMBERJID, '@') - 1)
-                      ELSE gm.ZMEMBERJID
-                  END || '-%'
+                  OR pi.ZJID = 'a_' || gm.ZMEMBERJID
+                  OR pi.ZJID LIKE 'om_' || gm.ZMEMBERJID || '_%'
               )
             ORDER BY pi.Z_PK DESC
             LIMIT 1
@@ -676,6 +667,79 @@ CONTACT_PUSH_NAME_QUERY = """
     LIMIT 1
 """
 
+LATEST_CHAT_PREVIEW_QUERY = """
+    SELECT
+        m.ZMESSAGEDATE AS message_date,
+        CASE
+            WHEN COALESCE(m.ZMESSAGETYPE, 0) = 59 THEN 'This message was deleted.'
+            WHEN COALESCE(m.ZMESSAGETYPE, 0) = 14 THEN
+                CASE
+                    WHEN COALESCE(m.ZISFROMME, 0) = 0 THEN 'Missed voice call'
+                    ELSE 'Voice call'
+                END
+            WHEN COALESCE(m.ZMESSAGETYPE, 0) = 46 THEN 'Poll'
+            WHEN COALESCE(m.ZTEXT, '') <> '' THEN COALESCE(m.ZTEXT, '')
+            WHEN COALESCE(m.ZMESSAGETYPE, 0) = 4
+                 OR UPPER(COALESCE(mi.ZVCARDSTRING, '')) LIKE '%BEGIN:VCARD%'
+                 OR UPPER(COALESCE(m.ZTEXT, '')) LIKE '%BEGIN:VCARD%' THEN 'Contact card'
+            WHEN COALESCE(mi.ZMEDIALOCALPATH, '') <> '' THEN 'Media'
+            ELSE ''
+        END AS preview_text
+    FROM ZWAMESSAGE m
+    LEFT JOIN ZWAMEDIAITEM mi ON mi.Z_PK = m.ZMEDIAITEM
+    WHERE m.ZCHATSESSION = ?
+      AND COALESCE(m.ZMESSAGETYPE, 0) NOT IN (6, 10)
+      AND (
+          COALESCE(m.ZTEXT, '') <> ''
+          OR COALESCE(mi.ZMEDIALOCALPATH, '') <> ''
+          OR COALESCE(mi.ZVCARDSTRING, '') <> ''
+          OR COALESCE(mi.ZVCARDNAME, '') <> ''
+          OR COALESCE(m.ZMESSAGETYPE, 0) IN (14, 46, 59)
+      )
+    ORDER BY m.ZMESSAGEDATE DESC, m.Z_PK DESC
+    LIMIT 1
+"""
+
+
+def _latest_chat_previews(connection: sqlite3.Connection, chat_ids: list[int]) -> dict[int, tuple[float, str]]:
+    """Return latest displayable `(message_date, preview_text)` per chat."""
+    if not chat_ids:
+        return {}
+
+    previews: dict[int, tuple[float, str]] = {}
+    for chat_id in dict.fromkeys(chat_ids):
+        row = connection.execute(LATEST_CHAT_PREVIEW_QUERY, [chat_id]).fetchone()
+        if row is None or row["message_date"] is None:
+            continue
+        previews[int(chat_id)] = (float(row["message_date"]), str(row["preview_text"] or ""))
+    return previews
+
+
+def _apply_latest_chat_previews(
+    connection: sqlite3.Connection,
+    chats: list[ChatSummary],
+) -> list[ChatSummary]:
+    """Overlay chat summaries with latest displayable preview text/date."""
+    previews = _latest_chat_previews(connection, [chat.chat_id for chat in chats])
+    if not previews:
+        return chats
+
+    updated: list[ChatSummary] = []
+    for chat in chats:
+        preview = previews.get(chat.chat_id)
+        if preview is None:
+            updated.append(chat)
+            continue
+        preview_date_raw, preview_text = preview
+        updated.append(
+            replace(
+                chat,
+                last_message_date=coredata_to_datetime(preview_date_raw),
+                last_message_text=preview_text,
+            )
+        )
+    return updated
+
 
 def _validate_tab(tab: str) -> None:
     """Validate the requested sidebar tab key."""
@@ -695,11 +759,12 @@ def _to_chat_summary(row: sqlite3.Row) -> ChatSummary:
     raw_name = row["chat_name"] or row["contact_jid"] or "Unknown chat"
     contact_jid = row["contact_jid"] or ""
     last_message_text = row["last_message_text"] or ""
+    unread_count = max(0, int(row["unread_count"] or 0))
     return ChatSummary(
         chat_id=int(row["chat_id"]),
         chat_name=str(raw_name),
         contact_jid=str(contact_jid),
-        unread_count=int(row["unread_count"] or 0),
+        unread_count=unread_count,
         last_message_date=coredata_to_datetime(row["last_message_date"]),
         last_message_text=str(last_message_text),
         is_group=contact_jid.endswith("@g.us"),
@@ -743,6 +808,7 @@ def list_chats(
         sql = TAB_CHAT_QUERIES[tab]
         rows = connection.execute(sql, [safe_limit, safe_offset]).fetchall()
     chats = [_to_chat_summary(row) for row in rows]
+    chats = _apply_latest_chat_previews(connection, chats)
     return chats, get_tab_counts(connection)
 
 
@@ -754,18 +820,21 @@ def get_chat_by_id(connection: sqlite3.Connection, chat_id: int) -> ChatSummary 
     return _to_chat_summary(row)
 
 
-def _resolve_sender_name(row: sqlite3.Row) -> str:
+def _resolve_sender_name(row: sqlite3.Row, prefix: str = "") -> str:
     """Resolve sender display name from group/direct message row fields."""
-    if bool(row["is_from_me"] or 0):
+    if bool(row[f"{prefix}is_from_me"] or 0):
         return "You"
 
-    group_member_jid = str(row["group_member_jid"] or "").strip()
+    group_member_jid = str(row[f"{prefix}group_member_jid"] or "").strip()
     has_group_sender = bool(
-        group_member_jid or row["group_contact_name"] or row["group_first_name"] or row["group_push_name"]
+        group_member_jid
+        or row[f"{prefix}group_contact_name"]
+        or row[f"{prefix}group_first_name"]
+        or row[f"{prefix}group_push_name"]
     )
     if has_group_sender:
         for key in ("group_contact_name", "group_first_name", "group_push_name"):
-            value = row[key]
+            value = row[f"{prefix}{key}"]
             if value:
                 return str(value)
         if group_member_jid:
@@ -775,12 +844,12 @@ def _resolve_sender_name(row: sqlite3.Row) -> str:
     if direct_chat_name:
         return str(direct_chat_name)
 
-    from_push_name = row["from_push_name"]
+    from_push_name = row[f"{prefix}from_push_name"]
     if from_push_name:
         return str(from_push_name)
 
-    if row["from_jid"]:
-        return _jid_to_label(str(row["from_jid"]))
+    if row[f"{prefix}from_jid"]:
+        return _jid_to_label(str(row[f"{prefix}from_jid"]))
     return "Unknown"
 
 
@@ -817,16 +886,33 @@ def get_messages(
             message_date=coredata_to_datetime(row["message_date"]),
             is_from_me=bool(row["is_from_me"] or 0),
             message_type=int(row["message_type"] or 0),
+            message_status=int(row["message_status"] or 0),
             text=str(row["text"] or ""),
             sender_name=_resolve_sender_name(row),
-            sender_jid=(
-                str(row["group_member_jid"] or "").strip()
-                or str(row["from_jid"] or "").strip()
-                or None
-            ),
+            sender_jid=(str(row["group_member_jid"] or "").strip() or str(row["from_jid"] or "").strip() or None),
             media_path=str(row["media_path"]) if row["media_path"] else None,
             vcard_name=str(row["vcard_name"]) if row["vcard_name"] else None,
             vcard_value=str(row["vcard_value"]) if row["vcard_value"] else None,
+            parent_message_id=int(row["parent_message_id"]) if row["parent_message_id"] else None,
+            parent_message_type=int(row["parent_message_type"]) if row["parent_message_type"] is not None else None,
+            parent_message_status=(
+                int(row["parent_message_status"]) if row["parent_message_status"] is not None else None
+            ),
+            parent_is_from_me=bool(row["parent_is_from_me"] or 0) if row["parent_message_id"] else None,
+            parent_text=str(row["parent_text"] or "") if row["parent_message_id"] else None,
+            parent_sender_name=_resolve_sender_name(row, prefix="parent_") if row["parent_message_id"] else None,
+            parent_sender_jid=(
+                (
+                    str(row["parent_group_member_jid"] or "").strip()
+                    or str(row["parent_from_jid"] or "").strip()
+                    or None
+                )
+                if row["parent_message_id"]
+                else None
+            ),
+            parent_media_path=str(row["parent_media_path"]) if row["parent_media_path"] else None,
+            parent_vcard_name=str(row["parent_vcard_name"]) if row["parent_vcard_name"] else None,
+            parent_vcard_value=str(row["parent_vcard_value"]) if row["parent_vcard_value"] else None,
         )
         for row in visible_rows
     ]

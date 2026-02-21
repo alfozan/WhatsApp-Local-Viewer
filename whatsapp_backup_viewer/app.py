@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, cast
@@ -19,6 +20,7 @@ from .models import ChatSummary, MessageItem
 from .repository import VALID_TABS, get_chat_by_id, get_chat_info, get_messages, list_chats
 
 viewer = Blueprint("viewer", __name__)
+MENTION_PATTERN = re.compile(r"(?<!\w)@([0-9]{6,20})\b")
 
 
 def _get_app_config() -> AppConfig:
@@ -57,7 +59,8 @@ def _resolve_avatar_attachment(
     )
 
     seen: set[str] = set()
-    ordered_paths: list[str | None] = [fallback_path, *candidate_paths]
+    # Prefer explicit DB-linked avatar paths first; use fuzzy JID fallback only if those miss.
+    ordered_paths: list[str | None] = [*candidate_paths, fallback_path]
     for raw_path in ordered_paths:
         if not raw_path or raw_path in seen:
             continue
@@ -409,6 +412,9 @@ def _serialize_vcard(message: MessageItem, lookup_cache: dict[str, dict[str, str
             vcard_text = candidate
             break
 
+    if not vcard_text and message.message_type != 4:
+        return None
+
     if vcard_text:
         parsed = _parse_vcard_text(vcard_text)
         identifier = _extract_vcard_identifier(message)
@@ -427,9 +433,6 @@ def _serialize_vcard(message: MessageItem, lookup_cache: dict[str, dict[str, str
             "title": parsed["title"],
         }
 
-    if message.message_type != 14:
-        return None
-
     identifier = _extract_vcard_identifier(message)
     if not identifier:
         return {
@@ -447,6 +450,140 @@ def _serialize_vcard(message: MessageItem, lookup_cache: dict[str, dict[str, str
         "emails": [],
         "organization": "",
         "title": "",
+    }
+
+
+def _serialize_call_event(message: MessageItem) -> dict[str, Any] | None:
+    """Serialize WhatsApp call-like message rows into a display label."""
+    if message.message_type != 14:
+        return None
+
+    # In iOS backups this type is often logged call activity with sparse fields.
+    if not message.is_from_me and message.message_status in {6, 8}:
+        label = "Missed voice call"
+    elif message.is_from_me and message.message_status == 6:
+        label = "Outgoing voice call"
+    elif message.message_status == 8:
+        label = "Incoming voice call"
+    else:
+        label = "Voice call"
+    return {"label": label}
+
+
+def _serialize_poll_event(message: MessageItem) -> dict[str, Any] | None:
+    """Serialize poll message rows that ship without text/media payloads."""
+    if message.message_type != 46:
+        return None
+    title = (message.text or "").strip() or "Poll"
+    return {"title": title}
+
+
+def _extract_message_mentions(
+    text: str | None,
+    lookup_cache: dict[str, dict[str, str] | None],
+) -> list[dict[str, str]]:
+    """Resolve numeric @mentions in message text into contact labels."""
+    if not text:
+        return []
+
+    mentions: list[dict[str, str]] = []
+    seen_tokens: set[str] = set()
+    for match in MENTION_PATTERN.finditer(text):
+        token_value = match.group(1)
+        raw_token = f"@{token_value}"
+        if raw_token in seen_tokens:
+            continue
+        seen_tokens.add(raw_token)
+
+        resolved_lookup: dict[str, str] | None = None
+        for identifier in (token_value, f"{token_value}@s.whatsapp.net", f"{token_value}@lid"):
+            details = _lookup_contact_details(identifier, lookup_cache)
+            if details.get("name"):
+                resolved_lookup = details
+                break
+            if resolved_lookup is None and (details.get("number") or details.get("id")):
+                resolved_lookup = details
+        if resolved_lookup is None:
+            resolved_lookup = {"name": "", "number": "", "id": ""}
+
+        mention_label = (
+            str(resolved_lookup.get("name") or "").strip()
+            or _format_phone_number(token_value)
+            or token_value
+        )
+        mentions.append(
+            {
+                "token": raw_token,
+                "value": token_value,
+                "label": mention_label,
+                "jid": str(resolved_lookup.get("id") or "").strip(),
+            }
+        )
+    return mentions
+
+
+def _reply_media_label(media_path: str) -> str:
+    """Return short UI label for replied media messages."""
+    app_config = _get_app_config()
+    media = build_media_attachment(media_path, "", app_config.backup_dir)
+    media_kind_map = {
+        "image": "Photo",
+        "video": "Video",
+        "audio": "Audio",
+        "document": "Document",
+    }
+    return media_kind_map.get(media.kind, "Media")
+
+
+def _reply_preview_text(message: MessageItem) -> str:
+    """Return compact preview text for a quoted parent message."""
+    raw_text = (message.parent_text or "").strip()
+    if raw_text:
+        return raw_text
+
+    if message.parent_message_type == 59:
+        return "This message was deleted."
+    if message.parent_message_type == 14:
+        if not message.parent_is_from_me and message.parent_message_status in {6, 8}:
+            return "Missed voice call"
+        if message.parent_is_from_me and message.parent_message_status == 6:
+            return "Outgoing voice call"
+        if message.parent_message_status == 8:
+            return "Incoming voice call"
+        return "Voice call"
+    if message.parent_message_type == 46:
+        return "Poll"
+    if message.parent_media_path:
+        return _reply_media_label(message.parent_media_path)
+
+    parent_vcard_value = (message.parent_vcard_value or "").strip().upper()
+    if message.parent_message_type == 4 or "BEGIN:VCARD" in parent_vcard_value or message.parent_vcard_name:
+        return "Contact card"
+    return "Message"
+
+
+def _serialize_reply(
+    message: MessageItem,
+    lookup_cache: dict[str, dict[str, str] | None],
+) -> dict[str, Any] | None:
+    """Serialize replied-to message metadata for quote-preview rendering."""
+    if not message.parent_message_id:
+        return None
+
+    sender_name = (message.parent_sender_name or "").strip() or "Unknown"
+    if not message.parent_is_from_me and message.parent_sender_jid:
+        sender_details = _lookup_contact_details(message.parent_sender_jid, lookup_cache)
+        resolved_sender_name = str(sender_details.get("name") or "").strip()
+        if resolved_sender_name:
+            sender_name = resolved_sender_name
+
+    preview_text = _reply_preview_text(message)
+    return {
+        "message_id": message.parent_message_id,
+        "sender_name": sender_name,
+        "is_from_me": bool(message.parent_is_from_me),
+        "text": preview_text,
+        "mentions": _extract_message_mentions(preview_text, lookup_cache),
     }
 
 
@@ -500,7 +637,7 @@ def _serialize_message(
     message: MessageItem,
     contact_lookup_cache: dict[str, dict[str, str] | None],
 ) -> dict[str, Any]:
-    """Serialize one message with media, sender, and vCard enrichment."""
+    """Serialize one message with media, sender, and structured message enrichments."""
     sender_name = message.sender_name
     sender_key = message.sender_jid or message.sender_name or "unknown"
     if not message.is_from_me and message.sender_jid:
@@ -516,11 +653,16 @@ def _serialize_message(
         "message_date": message.message_date.isoformat() if message.message_date else None,
         "is_from_me": message.is_from_me,
         "message_type": message.message_type,
+        "message_status": message.message_status,
         "text": message.text,
         "sender_name": sender_name,
         "sender_key": sender_key,
         "media": None,
         "vcard": _serialize_vcard(message, contact_lookup_cache),
+        "call_event": _serialize_call_event(message),
+        "poll_event": _serialize_poll_event(message),
+        "mentions": _extract_message_mentions(message.text, contact_lookup_cache),
+        "reply_to": _serialize_reply(message, contact_lookup_cache),
     }
     if message.media_path:
         media_url = url_for("viewer.media_file", encoded_media_path=encode_media_token(message.media_path))

@@ -373,6 +373,51 @@ body.is-resizing .sidebar-resizer {
   word-wrap: break-word;
 }
 
+.message-mention {
+  color: #53bdeb;
+  font-weight: 600;
+}
+
+.message.outgoing .message-mention {
+  color: #9fe7d4;
+}
+
+.reply-preview {
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid #53bdeb;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg), var(--incoming-bg) 45%);
+}
+
+.message.outgoing .reply-preview {
+  border-left-color: #89e0c6;
+  background: color-mix(in srgb, var(--outgoing-bg), #0f5446 30%);
+}
+
+.reply-sender {
+  font-size: 0.86rem;
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: #89d4ff;
+}
+
+.message.outgoing .reply-sender {
+  color: #b4f7dd;
+}
+
+.reply-text {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.reply-text-muted {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .message-placeholder {
   color: var(--text-muted);
   font-size: 0.9rem;
@@ -381,6 +426,14 @@ body.is-resizing .sidebar-resizer {
 
 .message-placeholder.is-deleted {
   color: color-mix(in srgb, var(--text-muted), #f6b6b6 25%);
+}
+
+.message-placeholder.is-call {
+  color: color-mix(in srgb, var(--text-muted), #8ad5ff 24%);
+}
+
+.message-placeholder.is-poll {
+  color: color-mix(in srgb, var(--text-muted), #91f7bb 20%);
 }
 
 .message-link {

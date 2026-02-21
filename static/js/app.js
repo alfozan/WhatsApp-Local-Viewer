@@ -68,21 +68,49 @@
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;");
 
-  const linkifyText = (value) => {
-    const escaped = escapeHtml(value || "");
-    return escaped.replace(/(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi, (token) => {
-      let urlToken = token;
-      let trailing = "";
-      while (/[),.!?;:]$/.test(urlToken)) {
-        trailing = urlToken.slice(-1) + trailing;
-        urlToken = urlToken.slice(0, -1);
+  const formatMessageText = (value, mentions = []) => {
+    const source = String(value || "");
+    if (!source) {
+      return "";
+    }
+
+    const mentionMap = new Map(
+      (mentions || [])
+        .map((mention) => [String(mention.token || ""), String(mention.label || "").trim()])
+        .filter(([token]) => token)
+    );
+    const tokenPattern = /(https?:\/\/[^\s<]+|www\.[^\s<]+|@[0-9]{6,20})/gi;
+
+    let cursor = 0;
+    let output = "";
+    for (const match of source.matchAll(tokenPattern)) {
+      const token = match[0];
+      const tokenIndex = match.index ?? 0;
+      output += escapeHtml(source.slice(cursor, tokenIndex));
+
+      if (/^@[0-9]{6,20}$/i.test(token)) {
+        const displayLabel = mentionMap.get(token) || token.slice(1);
+        output += `<span class="message-mention">@${escapeHtml(displayLabel)}</span>`;
+      } else {
+        let urlToken = token;
+        let trailing = "";
+        while (/[),.!?;:]$/.test(urlToken)) {
+          trailing = urlToken.slice(-1) + trailing;
+          urlToken = urlToken.slice(0, -1);
+        }
+        if (urlToken) {
+          const href = urlToken.toLowerCase().startsWith("www.") ? `https://${urlToken}` : urlToken;
+          output += `<a class="message-link" href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+            urlToken
+          )}</a>${escapeHtml(trailing)}`;
+        } else {
+          output += escapeHtml(token);
+        }
       }
-      if (!urlToken) {
-        return token;
-      }
-      const href = urlToken.toLowerCase().startsWith("www.") ? `https://${urlToken}` : urlToken;
-      return `<a class="message-link" href="${href}" target="_blank" rel="noopener noreferrer">${urlToken}</a>${trailing}`;
-    });
+      cursor = tokenIndex + token.length;
+    }
+    output += escapeHtml(source.slice(cursor));
+    return output;
   };
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -366,15 +394,51 @@
     `;
   };
 
+  const renderCallEvent = (callEvent) => {
+    if (!callEvent) {
+      return "";
+    }
+    const label = escapeHtml(callEvent.label || "Voice call");
+    return `<div class="message-placeholder is-call">${label}</div>`;
+  };
+
+  const renderPollEvent = (pollEvent) => {
+    if (!pollEvent) {
+      return "";
+    }
+    const title = escapeHtml(pollEvent.title || "Poll");
+    return `<div class="message-placeholder is-poll">Poll: ${title}</div>`;
+  };
+
+  const renderReplyPreview = (replyTo) => {
+    if (!replyTo) {
+      return "";
+    }
+    const senderName = escapeHtml(replyTo.sender_name || "Unknown");
+    const replyText = replyTo.text
+      ? formatMessageText(replyTo.text, replyTo.mentions || [])
+      : '<span class="reply-text-muted">Message</span>';
+    const sideClass = replyTo.is_from_me ? "is-from-me" : "";
+    return `
+      <div class="reply-preview ${sideClass}">
+        <div class="reply-sender">${senderName}</div>
+        <div class="reply-text">${replyText}</div>
+      </div>
+    `;
+  };
+
   const placeholderForMessage = (message) => {
-    if (message.text || message.media || message.vcard) {
+    if (message.text || message.media || message.vcard || message.call_event || message.poll_event) {
       return "";
     }
     if (message.message_type === 59) {
       return '<div class="message-placeholder is-deleted">This message was deleted.</div>';
     }
     if (message.message_type === 14) {
-      return '<div class="message-placeholder">Contact card or unsupported message.</div>';
+      return '<div class="message-placeholder is-call">Voice call</div>';
+    }
+    if (message.message_type === 46) {
+      return '<div class="message-placeholder is-poll">Poll</div>';
     }
     return '<div class="message-placeholder">Unsupported message.</div>';
   };
@@ -404,17 +468,25 @@
           chat && chat.is_group && !message.is_from_me && senderKey
             ? ` style="color:${escapeHtml(senderColorFromKey(senderKey))}"`
             : "";
-        const text = message.text ? `<div class="message-text">${linkifyText(message.text)}</div>` : "";
+        const text = message.text
+          ? `<div class="message-text">${formatMessageText(message.text, message.mentions || [])}</div>`
+          : "";
+        const reply = renderReplyPreview(message.reply_to);
         const media = renderMedia(message.media);
         const vcard = renderVCard(message.vcard);
+        const callEvent = renderCallEvent(message.call_event);
+        const pollEvent = renderPollEvent(message.poll_event);
         const placeholder = placeholderForMessage(message);
 
         return `
           <article class="message ${directionClass}">
             <div class="sender"${senderStyle}>${escapeHtml(sender)}</div>
+            ${reply}
             ${text}
             ${media}
             ${vcard}
+            ${callEvent}
+            ${pollEvent}
             ${placeholder}
             <div class="message-meta">${escapeHtml(formatDate(message.message_date))}</div>
           </article>
