@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import re
 import sqlite3
 from functools import lru_cache
@@ -1379,3 +1380,22 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
     app.teardown_appcontext(close_db)
     app.register_blueprint(viewer)
     return app
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for running the local Flask server."""
+    parser = argparse.ArgumentParser(description="Run WhatsApp Local Viewer.")
+    parser.add_argument(
+        "--whatsapp-dir",
+        default="~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared",
+        help="Path to WhatsApp data directory (contains ChatStorage.sqlite). Defaults to the macOS app directory.",
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="Flask host.")
+    parser.add_argument("--port", type=int, default=5000, help="Flask port.")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = _parse_args()
+    flask_app = create_app({"WHATSAPP_DIR": args.whatsapp_dir})
+    flask_app.run(host=args.host, port=args.port, debug=False)

@@ -92,7 +92,7 @@ make setup
 **2. Start the viewer**
 
 ```bash
-uv run python main.py --whatsapp-dir "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared" --port 5000
+uv run app.py
 ```
 
 **3. Open in your browser**
