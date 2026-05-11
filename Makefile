@@ -8,18 +8,11 @@ setup: clean
 	@echo ">>> Installing Python..."
 	uv python install
 
-	@echo ">>> Creating virtual environment..."
-	uv venv .venv
+	@echo ">>> Installing and upgrading dependencies..."
+	uv sync --upgrade
 
 	# ignore .venv folder in cloud-sync (e.g. Dropbox)
 	xattr -w 'com.apple.fileprovider.ignore#P' 1 .venv
-
-	@echo ">>> Activating virtual environment..."
-	. .venv/bin/activate
-
-	@echo ">>> Installing dependencies..."
-	uv sync --upgrade
-	uv lock --upgrade
 
 	@echo ">>> Python version..."
 	uv run python --version
