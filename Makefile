@@ -11,8 +11,6 @@ setup: clean
 	@echo ">>> Installing and upgrading dependencies..."
 	uv sync --upgrade
 
-	# ignore .venv folder in cloud-sync (e.g. Dropbox)
-	xattr -w 'com.apple.fileprovider.ignore#P' 1 .venv
 
 	@echo ">>> Python version..."
 	uv run python --version
