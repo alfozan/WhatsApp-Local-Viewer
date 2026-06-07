@@ -9,6 +9,7 @@
     tab: initialState.tab || "all",
     query: "",
     chats: initialState.chats || [],
+    messageResults: [],
     counts: initialState.counts || { all: 0, groups: 0, archived: 0 },
     selectedChatId: initialState.selected_chat_id || null,
     messages: initialState.messages || [],
@@ -165,13 +166,20 @@
     if (Number.isNaN(date.getTime())) {
       return "";
     }
-    return date.toLocaleString([], {
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
+    const today = new Date();
+    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const dayDifference = Math.round((startOfToday.getTime() - startOfDate.getTime()) / 86400000);
+    if (dayDifference <= 0) {
+      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+    if (dayDifference === 1) {
+      return "Yesterday";
+    }
+    if (dayDifference < 7) {
+      return date.toLocaleDateString([], { weekday: "long" });
+    }
+    return date.toLocaleDateString([], { year: "2-digit", month: "numeric", day: "numeric" });
   };
 
   const initialsFromName = (name) => {
@@ -318,26 +326,32 @@
     window.history.replaceState({}, "", `${url.pathname}?${url.searchParams.toString()}`);
   };
 
-  const selectedChat = () => state.chats.find((chat) => chat.chat_id === state.selectedChatId);
+  const selectedChat = () =>
+    [...state.chats, ...state.messageResults].find((chat) => chat.chat_id === state.selectedChatId);
 
   const renderChats = () => {
-    if (!state.chats.length) {
+    if (!state.chats.length && !state.messageResults.length) {
       chatListNode.innerHTML = '<li class="empty-state">No chats found.</li>';
       return;
     }
 
-    const chatRows = state.chats
-      .map((chat) => {
-        const isSelected = chat.chat_id === state.selectedChatId;
-        const badge = chat.unread_count > 0 ? `<span class="unread-badge">${chat.unread_count}</span>` : "";
-        return `
+    const renderChatRow = (chat) => {
+      const isSelected = chat.chat_id === state.selectedChatId;
+      const badge = chat.unread_count > 0 ? `<span class="unread-badge">${chat.unread_count}</span>` : "";
+      const pin = chat.is_pinned
+        ? '<span class="pin-indicator" role="img" aria-label="Pinned chat" title="Pinned chat"></span>'
+        : "";
+      return `
           <li class="chat-row ${isSelected ? "is-selected" : ""}" data-chat-id="${chat.chat_id}">
             <div class="chat-row-main">
               ${avatarMarkup(chat, "avatar-sm")}
               <div class="chat-row-content">
                 <div class="chat-topline">
                   <span class="chat-name">${escapeHtml(chat.chat_name)}</span>
-                  <span class="chat-time">${escapeHtml(formatShortDate(chat.last_message_date))}</span>
+                  <span class="chat-row-meta">
+                    ${pin}
+                    <span class="chat-time">${escapeHtml(formatShortDate(chat.last_message_date))}</span>
+                  </span>
                 </div>
                 <div class="chat-bottomline">
                   <span class="chat-preview">${escapeHtml(chat.last_message_text || "")}</span>
@@ -347,15 +361,41 @@
             </div>
           </li>
         `;
-      })
-      .join("");
+    };
+
+    const renderMessageResultRow = (result) => {
+      const isSelected = result.chat_id === state.selectedChatId;
+      const sender = result.sender_name ? `<span class="search-result-sender">${escapeHtml(result.sender_name)}: </span>` : "";
+      return `
+          <li class="chat-row search-result-row ${isSelected ? "is-selected" : ""}" data-chat-id="${result.chat_id}" data-message-id="${result.message_id}">
+            <div class="chat-row-main">
+              ${avatarMarkup(result, "avatar-sm")}
+              <div class="search-result-content">
+                <div class="chat-topline">
+                  <span class="chat-name">${escapeHtml(result.chat_name)}</span>
+                  <span class="chat-time">${escapeHtml(formatShortDate(result.message_date))}</span>
+                </div>
+                <div class="search-result-preview">${sender}${escapeHtml(result.snippet || "")}</div>
+              </div>
+            </div>
+          </li>
+        `;
+    };
+
+    const chatRows = state.chats.map(renderChatRow).join("");
+    const messageRows = state.messageResults.map(renderMessageResultRow).join("");
+    const resultRows = state.query
+      ? `${messageRows ? '<li class="search-section-title">Messages</li>' : ""}${messageRows}${
+          chatRows ? '<li class="search-section-title">Chats</li>' : ""
+        }${chatRows}`
+      : chatRows;
 
     const loadingRow = state.loadingChats
       ? '<li class="empty-state">Loading more chats...</li>'
       : state.hasMoreChats
         ? '<li class="empty-state">Scroll to load more</li>'
         : "";
-    chatListNode.innerHTML = `${chatRows}${loadingRow}`;
+    chatListNode.innerHTML = `${resultRows}${loadingRow}`;
   };
 
   const renderMedia = (media, mediaHd) => {
@@ -619,12 +659,20 @@
     }
     const payload = await response.json();
     const incomingChats = payload.chats || [];
+    const incomingMessageResults = payload.message_results || [];
     state.chats = reset ? incomingChats : [...state.chats, ...incomingChats];
-    state.chatOffset = state.chats.length;
-    state.hasMoreChats = incomingChats.length === state.chatPageSize;
+    state.messageResults = state.query
+      ? reset
+        ? incomingMessageResults
+        : [...state.messageResults, ...incomingMessageResults]
+      : [];
+    state.chatOffset = state.query ? state.messageResults.length : state.chats.length;
+    state.hasMoreChats = state.query
+      ? incomingMessageResults.length === state.chatPageSize
+      : incomingChats.length === state.chatPageSize;
     state.counts = payload.counts || state.counts;
 
-    if (!state.chats.find((chat) => chat.chat_id === state.selectedChatId)) {
+    if (![...state.chats, ...state.messageResults].find((chat) => chat.chat_id === state.selectedChatId)) {
       state.selectedChatId = null;
       await fetchMessages({ replaceCurrent: true, preservePosition: false });
     }
