@@ -19,8 +19,16 @@ from media import (
     find_profile_media_for_jid,
     resolve_media_path,
 )
-from models import ChatSummary, MessageItem
-from repository import VALID_TABS, find_direct_chat_id, get_chat_by_id, get_chat_info, get_messages, list_chats
+from models import ChatSummary, MessageItem, MessageSearchResult
+from repository import (
+    VALID_TABS,
+    find_direct_chat_id,
+    get_chat_by_id,
+    get_chat_info,
+    get_messages,
+    list_chats,
+    search_messages,
+)
 from utils import APPLE_EPOCH_OFFSET
 
 viewer = Blueprint("viewer", __name__)
@@ -1104,6 +1112,13 @@ def _serialize_chat(chat: ChatSummary) -> dict[str, Any]:
     return payload
 
 
+def _serialize_message_search_result(result: MessageSearchResult) -> dict[str, Any]:
+    """Serialize one sidebar message-search result."""
+    payload = cast(dict[str, Any], result.to_dict())
+    payload["avatar"] = _resolve_avatar_attachment([], result.contact_jid)
+    return payload
+
+
 def _serialize_message(
     message: MessageItem,
     contact_lookup_cache: dict[str, dict[str, str] | None],
@@ -1265,12 +1280,16 @@ def api_chats() -> tuple[Any, int] | Any:
     limit = _parse_int(request.args.get("limit"), 100)
     offset = _parse_int(request.args.get("offset"), 0)
     chats, counts = list_chats(connection, tab=tab, query=query_value, limit=limit, offset=offset)
+    message_results = (
+        search_messages(connection, tab=tab, query=query_value, limit=limit, offset=offset) if query_value else []
+    )
     return jsonify(
         {
             "tab": tab,
             "q": query_value or "",
             "counts": counts,
             "chats": [_serialize_chat(chat) for chat in chats],
+            "message_results": [_serialize_message_search_result(result) for result in message_results],
         }
     )
 

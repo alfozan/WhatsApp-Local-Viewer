@@ -39,6 +39,7 @@ class ChatSummary:
     last_message_text: str
     is_group: bool
     is_archived: bool
+    is_pinned: bool
     avatar_path: str | None
 
     def to_dict(self) -> dict[str, str | int | bool | None]:
@@ -52,7 +53,35 @@ class ChatSummary:
             "last_message_text": self.last_message_text,
             "is_group": self.is_group,
             "is_archived": self.is_archived,
+            "is_pinned": self.is_pinned,
             "avatar_path": self.avatar_path,
+        }
+
+
+@dataclass(frozen=True)
+class MessageSearchResult:
+    """Sidebar search item for one matching message."""
+
+    chat_id: int
+    chat_name: str
+    contact_jid: str
+    message_id: int
+    message_date: datetime | None
+    snippet: str
+    sender_name: str
+    is_group: bool
+
+    def to_dict(self) -> dict[str, str | int | bool | None]:
+        """Convert search result into JSON-ready dict form."""
+        return {
+            "chat_id": self.chat_id,
+            "chat_name": self.chat_name,
+            "contact_jid": self.contact_jid,
+            "message_id": self.message_id,
+            "message_date": self.message_date.isoformat() if self.message_date else None,
+            "snippet": self.snippet,
+            "sender_name": self.sender_name,
+            "is_group": self.is_group,
         }
 
 

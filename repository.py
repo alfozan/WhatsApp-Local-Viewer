@@ -4,7 +4,14 @@ import sqlite3
 from dataclasses import replace
 from typing import Any
 
-from models import ChatSummary, MessageItem
+from models import ChatSummary, MessageItem, MessageSearchResult
+from repository_pins import apply_export_pins, pinned_chat_ids_for_tab, pinned_jids_from_export
+from repository_search import (
+    chat_ids_matching_contact_search,
+    message_search_results,
+    primary_search_query,
+    search_query_variants,
+)
 from utils import coredata_to_datetime, decode_cursor, encode_cursor
 
 VALID_TABS = {"all", "groups", "archived"}
@@ -13,6 +20,7 @@ TAB_COUNT_QUERIES = {
     "all": (
         "SELECT COUNT(*) AS count_value FROM ZWACHATSESSION c "
         "WHERE COALESCE(c.ZARCHIVED, 0) = 0 "
+        "AND COALESCE(c.ZSESSIONTYPE, 0) != 3 "
         "AND COALESCE(c.ZCONTACTJID, '') <> '' "
         "AND COALESCE(c.ZCONTACTJID, '') <> '0@status' "
         "AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status' "
@@ -21,6 +29,7 @@ TAB_COUNT_QUERIES = {
     "groups": (
         "SELECT COUNT(*) AS count_value FROM ZWACHATSESSION c "
         "WHERE COALESCE(c.ZARCHIVED, 0) = 0 "
+        "AND COALESCE(c.ZSESSIONTYPE, 0) != 3 "
         "AND COALESCE(c.ZCONTACTJID, '') <> '' "
         "AND COALESCE(c.ZCONTACTJID, '') <> '0@status' "
         "AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status' "
@@ -30,6 +39,7 @@ TAB_COUNT_QUERIES = {
     "archived": (
         "SELECT COUNT(*) AS count_value FROM ZWACHATSESSION c "
         "WHERE COALESCE(c.ZARCHIVED, 0) = 1 "
+        "AND COALESCE(c.ZSESSIONTYPE, 0) != 3 "
         "AND COALESCE(c.ZCONTACTJID, '') <> '' "
         "AND COALESCE(c.ZCONTACTJID, '') <> '0@status' "
         "AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status' "
@@ -81,6 +91,7 @@ TAB_CHAT_QUERIES = {
             ) AS avatar_path
         FROM ZWACHATSESSION c
         WHERE COALESCE(c.ZARCHIVED, 0) = 0
+          AND COALESCE(c.ZSESSIONTYPE, 0) != 3
           AND COALESCE(c.ZCONTACTJID, '') <> ''
           AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
           AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
@@ -138,6 +149,7 @@ TAB_CHAT_QUERIES = {
             ) AS avatar_path
         FROM ZWACHATSESSION c
         WHERE COALESCE(c.ZARCHIVED, 0) = 0
+          AND COALESCE(c.ZSESSIONTYPE, 0) != 3
           AND COALESCE(c.ZCONTACTJID, '') <> ''
           AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
           AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
@@ -196,6 +208,7 @@ TAB_CHAT_QUERIES = {
             ) AS avatar_path
         FROM ZWACHATSESSION c
         WHERE COALESCE(c.ZARCHIVED, 0) = 1
+          AND COALESCE(c.ZSESSIONTYPE, 0) != 3
           AND COALESCE(c.ZCONTACTJID, '') <> ''
           AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
           AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
@@ -256,6 +269,7 @@ TAB_CHAT_SEARCH_QUERIES = {
             ) AS avatar_path
         FROM ZWACHATSESSION c
         WHERE COALESCE(c.ZARCHIVED, 0) = 0
+          AND COALESCE(c.ZSESSIONTYPE, 0) != 3
           AND COALESCE(c.ZCONTACTJID, '') <> ''
           AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
           AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
@@ -315,6 +329,7 @@ TAB_CHAT_SEARCH_QUERIES = {
             ) AS avatar_path
         FROM ZWACHATSESSION c
         WHERE COALESCE(c.ZARCHIVED, 0) = 0
+          AND COALESCE(c.ZSESSIONTYPE, 0) != 3
           AND COALESCE(c.ZCONTACTJID, '') <> ''
           AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
           AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
@@ -375,6 +390,7 @@ TAB_CHAT_SEARCH_QUERIES = {
             ) AS avatar_path
         FROM ZWACHATSESSION c
         WHERE COALESCE(c.ZARCHIVED, 0) = 1
+          AND COALESCE(c.ZSESSIONTYPE, 0) != 3
           AND COALESCE(c.ZCONTACTJID, '') <> ''
           AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
           AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
@@ -444,6 +460,7 @@ DIRECT_CHAT_BY_IDENTIFIERS_QUERY = """
         c.Z_PK AS chat_id
     FROM ZWACHATSESSION c
     WHERE COALESCE(c.ZCONTACTJID, '') <> ''
+      AND COALESCE(c.ZSESSIONTYPE, 0) != 3
       AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@g.us'
       AND COALESCE(c.ZCONTACTJID, '') <> '0@status'
       AND COALESCE(c.ZCONTACTJID, '') NOT LIKE '%@status'
@@ -944,6 +961,27 @@ def _jid_to_label(raw_jid: str) -> str:
     return raw_jid.split("@", 1)[0]
 
 
+def _chat_summaries_by_ids(
+    connection: sqlite3.Connection,
+    chat_ids: list[int],
+) -> list[ChatSummary]:
+    """Fetch chat summaries for a short explicit id list."""
+    chats: list[ChatSummary] = []
+    for chat_id in dict.fromkeys(chat_ids):
+        row = connection.execute(CHAT_BY_ID_QUERY, [chat_id]).fetchone()
+        if row is not None:
+            chats.append(_to_chat_summary(row))
+    return chats
+
+
+def _chat_sort_key(chat: ChatSummary) -> tuple[int, int, float, int]:
+    """Sort pinned chats first, then newest normal chats."""
+    last_message_date = chat.last_message_date
+    invalid_future_date = bool(last_message_date and last_message_date.year > 2100)
+    timestamp = last_message_date.timestamp() if last_message_date else 0.0
+    return (0 if chat.is_pinned else 1, 1 if invalid_future_date else 0, -timestamp, -chat.chat_id)
+
+
 def _to_chat_summary(row: sqlite3.Row) -> ChatSummary:
     """Convert a SQL chat row into `ChatSummary`."""
     raw_name = row["chat_name"] or row["contact_jid"] or "Unknown chat"
@@ -959,6 +997,7 @@ def _to_chat_summary(row: sqlite3.Row) -> ChatSummary:
         last_message_text=str(last_message_text),
         is_group=contact_jid.endswith("@g.us"),
         is_archived=bool(row["is_archived"] or 0),
+        is_pinned=False,
         avatar_path=str(row["avatar_path"]) if row["avatar_path"] else None,
     )
 
@@ -978,6 +1017,20 @@ def get_tab_counts(connection: sqlite3.Connection) -> dict[str, int]:
     return {tab: _tab_count(connection, tab) for tab in ("all", "groups", "archived")}
 
 
+def search_messages(
+    connection: sqlite3.Connection,
+    tab: str,
+    query: str,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[MessageSearchResult]:
+    """Search message history for sidebar search results."""
+    _validate_tab(tab)
+    safe_limit = max(1, min(limit, 200))
+    safe_offset = max(0, offset)
+    return message_search_results(connection, tab, search_query_variants(query), safe_limit, safe_offset)
+
+
 def list_chats(
     connection: sqlite3.Connection,
     tab: str,
@@ -989,26 +1042,51 @@ def list_chats(
     _validate_tab(tab)
     safe_limit = max(1, min(limit, 200))
     safe_offset = max(0, offset)
+    counts = get_tab_counts(connection)
+    pinned_jids, has_app_state_pin_data = pinned_jids_from_export(connection)
+    fetch_limit = safe_offset + safe_limit
+    query_variants = search_query_variants(query)
 
     if query:
-        like_value = f"%{query}%"
+        primary_query = primary_search_query(query)
+        like_value = f"%{primary_query}%"
         sql = TAB_CHAT_SEARCH_QUERIES[tab]
-        rows = connection.execute(sql, [like_value, like_value, like_value, safe_limit, safe_offset]).fetchall()
+        rows = connection.execute(
+            sql,
+            [like_value, like_value, like_value, fetch_limit, 0],
+        ).fetchall()
     else:
         sql = TAB_CHAT_QUERIES[tab]
-        rows = connection.execute(sql, [safe_limit, safe_offset]).fetchall()
+        rows = connection.execute(sql, [fetch_limit, 0]).fetchall()
     chats = [_to_chat_summary(row) for row in rows]
+    if has_app_state_pin_data:
+        existing_chat_ids = {chat.chat_id for chat in chats}
+        pinned_chat_ids = pinned_chat_ids_for_tab(
+            connection, tab, pinned_jids, primary_search_query(query) if query else None
+        )
+        missing_pinned_chat_ids = [chat_id for chat_id in pinned_chat_ids if chat_id not in existing_chat_ids]
+        chats.extend(_chat_summaries_by_ids(connection, missing_pinned_chat_ids))
+    if query_variants:
+        existing_chat_ids = {chat.chat_id for chat in chats}
+        matching_chat_ids = chat_ids_matching_contact_search(connection, tab, query_variants)
+        missing_matching_chat_ids = [chat_id for chat_id in matching_chat_ids if chat_id not in existing_chat_ids]
+        chats.extend(_chat_summaries_by_ids(connection, missing_matching_chat_ids))
+    chats = apply_export_pins(chats, pinned_jids, has_app_state_pin_data)
+    chats.sort(key=_chat_sort_key)
+    chats = chats[safe_offset : safe_offset + safe_limit]
     chats = _apply_derived_unread_counts(connection, chats)
     chats = _apply_latest_chat_previews(connection, chats)
-    return chats, get_tab_counts(connection)
+    chats.sort(key=_chat_sort_key)
+    return chats, counts
 
 
 def get_chat_by_id(connection: sqlite3.Connection, chat_id: int) -> ChatSummary | None:
     """Fetch one chat summary by primary key."""
+    pinned_jids, has_app_state_pin_data = pinned_jids_from_export(connection)
     row = connection.execute(CHAT_BY_ID_QUERY, [chat_id]).fetchone()
     if row is None:
         return None
-    chat = _to_chat_summary(row)
+    chat = apply_export_pins([_to_chat_summary(row)], pinned_jids, has_app_state_pin_data)[0]
     unread_count = _derived_unread_count(connection, chat.chat_id)
     return replace(chat, unread_count=unread_count)
 
@@ -1166,6 +1244,7 @@ def get_chat_info(connection: sqlite3.Connection, chat_id: int) -> dict[str, Any
         "unread_count": chat.unread_count,
         "is_group": chat.is_group,
         "is_archived": chat.is_archived,
+        "is_pinned": chat.is_pinned,
         "last_message_date": chat.last_message_date.isoformat() if chat.last_message_date else None,
         "avatar_path": chat.avatar_path,
         "muted_until": muted_until.isoformat() if muted_until else None,
