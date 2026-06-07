@@ -24,9 +24,11 @@
   };
 
   const SIDEBAR_WIDTH_KEY = "whatsapp_viewer_sidebar_width";
+  const THEME_STORAGE_KEY = "whatsapp_viewer_theme";
 
   const tabsContainer = document.getElementById("chat-tabs");
   const searchInput = document.getElementById("chat-search");
+  const themeToggleButton = document.getElementById("theme-toggle");
   const chatListNode = document.getElementById("chat-list");
   const chatTitleNode = document.getElementById("chat-title");
   const chatHeaderAvatarNode = document.getElementById("chat-header-avatar");
@@ -288,19 +290,56 @@
     targetNode.style.background = hashColor(label);
   };
 
-  const applySystemTheme = () => {
-    const prefersLight = window.matchMedia("(prefers-color-scheme: light)").matches;
-    document.documentElement.dataset.theme = prefersLight ? "light" : "dark";
+  const systemThemeQuery = window.matchMedia("(prefers-color-scheme: light)");
+
+  const systemTheme = () => (systemThemeQuery.matches ? "light" : "dark");
+
+  const storedTheme = () => {
+    try {
+      const value = window.localStorage.getItem(THEME_STORAGE_KEY);
+      return value === "light" || value === "dark" ? value : null;
+    } catch (_error) {
+      return null;
+    }
   };
 
-  const syncThemeListener = () => {
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
-    applySystemTheme();
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", applySystemTheme);
+  const setStoredTheme = (themeName) => {
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, themeName);
+    } catch (_error) {}
+  };
+
+  const effectiveTheme = () => storedTheme() || systemTheme();
+
+  const syncThemeToggle = (themeName) => {
+    if (!themeToggleButton) {
       return;
     }
-    mediaQuery.addListener(applySystemTheme);
+    const nextTheme = themeName === "dark" ? "light" : "dark";
+    themeToggleButton.dataset.nextTheme = nextTheme;
+    const label = `Switch to ${nextTheme} mode`;
+    themeToggleButton.setAttribute("aria-label", label);
+    themeToggleButton.title = label;
+  };
+
+  const applyTheme = () => {
+    const themeName = effectiveTheme();
+    document.documentElement.dataset.theme = themeName;
+    syncThemeToggle(themeName);
+  };
+
+  const setupThemeControls = () => {
+    applyTheme();
+    themeToggleButton?.addEventListener("click", () => {
+      const nextTheme = effectiveTheme() === "dark" ? "light" : "dark";
+      setStoredTheme(nextTheme);
+      applyTheme();
+    });
+    if (typeof systemThemeQuery.addEventListener === "function") {
+      systemThemeQuery.addEventListener("change", applyTheme);
+      return;
+    }
+    systemThemeQuery.addListener(applyTheme);
   };
 
   const setTabCounts = () => {
@@ -1031,7 +1070,7 @@
     }, 220);
   });
 
-  syncThemeListener();
+  setupThemeControls();
   setupResizer();
   setTabCounts();
   syncTabUI();

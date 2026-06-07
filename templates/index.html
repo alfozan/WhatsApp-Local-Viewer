@@ -4,7 +4,12 @@
 <div class="app-shell" id="app-shell">
   <aside class="sidebar" id="sidebar">
     <header class="sidebar-header">
-      <h1>Chats</h1>
+      <div class="sidebar-titlebar">
+        <h1>Chats</h1>
+        <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+          <span class="theme-toggle-icon" aria-hidden="true"></span>
+        </button>
+      </div>
       <input id="chat-search" type="search" placeholder="Search chats">
       <div class="tabs" id="chat-tabs">
         <button class="tab is-active" data-tab="all">All <span id="count-all">0</span></button>

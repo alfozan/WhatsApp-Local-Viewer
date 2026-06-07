@@ -1396,6 +1396,17 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
     backup_dir_override = app.config.get("WHATSAPP_DIR")
     app.config["APP_CONFIG"] = AppConfig.from_path(str(backup_dir_override) if backup_dir_override else None)
     app.config.setdefault("JSON_AS_ASCII", False)
+
+    @app.template_global()
+    def static_asset_url(filename: str) -> str:
+        """Return a static asset URL that changes when the file changes."""
+        asset_path = project_root / "static" / filename
+        try:
+            asset_version = str(asset_path.stat().st_mtime_ns)
+        except OSError:
+            return url_for("static", filename=filename)
+        return url_for("static", filename=filename, v=asset_version)
+
     app.teardown_appcontext(close_db)
     app.register_blueprint(viewer)
     return app
